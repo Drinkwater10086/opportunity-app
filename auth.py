@@ -47,7 +47,7 @@ def install(app, connect):
             request.state.user = dict(user)
             if request.method != 'GET':
                 admin_only = path in ('/api/config', '/api/users')
-                research_only = path == '/api/batches' or path.endswith(('/analyze', '/clone', '/clone-available'))
+                research_only = path == '/api/batches' or path.endswith(('/analyze', '/clone', '/clone-available', '/stability-run'))
                 if (admin_only and user['role'] != 'admin') or (research_only and user['role'] == 'decision'):
                     return JSONResponse({'detail': '当前角色没有此操作权限'}, status_code=403)
         return await call_next(request)

@@ -31,6 +31,8 @@ ROOT = Path(__file__).resolve().parent
 DATA = ROOT / 'data'
 LOCK = threading.Lock()
 ANALYSIS_LOCK = threading.Lock()
+STABILITY_LOCK = threading.Lock()
+STABILITY_JOBS = {}
 MODEL_KEY = ''
 BIGMODEL_KEY = ''
 MODEL_PROVIDER = 'deepseek'
@@ -305,6 +307,11 @@ class AnalysisInput(BaseModel):
     coverage_weight: float = Field(default=0.6, gt=0, le=1, allow_inf_nan=False)
     scale_weight: float = Field(default=0.4, gt=0, le=1, allow_inf_nan=False)
     budget_yuan: float = Field(default=5, gt=0, le=100, allow_inf_nan=False)
+
+
+class StabilityInput(BaseModel):
+    provider: Literal['deepseek', 'bigmodel'] = 'deepseek'
+    budget_yuan: float | None = Field(default=None, gt=0, le=100, allow_inf_nan=False)
 
 
 def model_key(provider=None):
@@ -940,6 +947,64 @@ def completed_analysis(batch_id):
     if not state or state['status'] != 'complete':
         raise HTTPException(409, '全部分析成功后才能导出最终结果')
     return state
+
+
+def run_stability(batch_id, provider, key, positives, budget):
+    """Two fresh, unassisted partitions; rejected outputs remain in the audit log."""
+    with ANALYSIS_LOCK:
+        with STABILITY_LOCK:
+            STABILITY_JOBS[batch_id]['status'] = 'running'
+        try:
+            prompt = engine.cluster_prompt(positives)
+            for attempt in range(4):
+                payload = request_provider(batch_id, 'cluster', prompt, 12000, key, budget, provider)
+                with STABILITY_LOCK:
+                    STABILITY_JOBS[batch_id]['attempts'] = attempt + 1
+                try:
+                    engine.validate_clusters(payload, positives)
+                except (ValueError, KeyError, TypeError):
+                    continue
+                with STABILITY_LOCK:
+                    STABILITY_JOBS[batch_id]['valid_runs'] += 1
+                    if STABILITY_JOBS[batch_id]['valid_runs'] == 2:
+                        STABILITY_JOBS[batch_id]['status'] = 'complete'
+                        return
+            raise ValueError('四次独立聚类中有效结果不足两次，请检查模型输出后再试')
+        except Exception as exc:
+            message = str(exc) if isinstance(exc, ValueError) and not hasattr(exc, 'errors') else f'独立聚类中断（{type(exc).__name__}）'
+            with STABILITY_LOCK:
+                STABILITY_JOBS[batch_id].update(status='failed', error=message[:500])
+
+
+@app.post('/api/batches/{batch_id}/stability-run', status_code=202)
+def start_stability(batch_id: str, body: StabilityInput, background: BackgroundTasks):
+    state = completed_analysis(batch_id)
+    positives = {k: v for k, v in sorted(state['judgments'].items()) if v['opportunity']}
+    if len(positives) < 2:
+        raise HTTPException(409, '至少需要两条候选记录才能比较聚类')
+    key = model_key(body.provider)
+    if not key:
+        raise HTTPException(409, '请先配置所选模型的 API Key')
+    with STABILITY_LOCK:
+        current = STABILITY_JOBS.get(batch_id, {})
+        if current.get('status') in ('queued', 'running'):
+            raise HTTPException(409, '该批次的独立聚类已在运行')
+        if body.budget_yuan is not None:
+            state['config']['budget_yuan'] = body.budget_yuan
+            with connect() as db:
+                db.execute('UPDATE analyses SET config=? WHERE batch_id=?',
+                           (json.dumps(state['config'], ensure_ascii=False), batch_id))
+        STABILITY_JOBS[batch_id] = {'status': 'queued', 'provider': body.provider,
+                                    'attempts': 0, 'valid_runs': 0, 'error': ''}
+    background.add_task(run_stability, batch_id, body.provider, key, positives, state['config']['budget_yuan'])
+    return {'status': 'queued'}
+
+
+@app.get('/api/batches/{batch_id}/stability-run')
+def stability_status(batch_id: str):
+    completed_analysis(batch_id)
+    with STABILITY_LOCK:
+        return dict(STABILITY_JOBS.get(batch_id, {'status': 'idle', 'attempts': 0, 'valid_runs': 0, 'error': ''}))
 
 
 def csv_download(header, rows, filename):
