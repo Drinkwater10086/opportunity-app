@@ -26,6 +26,7 @@ import source_policy
 import analysis_engine as engine
 import auth
 import automatic_evaluation
+import local_routes
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / 'data'
@@ -80,6 +81,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS pair_reviews(batch_id TEXT NOT NULL REFERENCES batches(id),left_id TEXT NOT NULL,right_id TEXT NOT NULL,reviewer TEXT NOT NULL,same_topic INTEGER NOT NULL,PRIMARY KEY(batch_id,left_id,right_id,reviewer));
         ''')
         auth.init(db)
+        local_routes.init(db)
         db.execute("UPDATE batches SET status='failed',error='上次运行中断，请新建批次重试' WHERE status IN ('queued','running')")
         db.execute("UPDATE analyses SET status='failed',error='运行中断；已完成的判别可复用，点击继续分析' WHERE status IN ('queued','running')")
 
@@ -109,7 +111,7 @@ class BatchInput(BaseModel):
     query: str = Field(min_length=2, max_length=1300)
     limit: int = Field(default=100, ge=1, le=500)
     days: int = Field(default=365, ge=1, le=730)
-    sources: list[Literal['github', 'github_issues', 'stackoverflow', 'hackernews', 'superuser', 'workplace', 'n8n', 'make', 'nodered']] = Field(default=['github'], min_length=1, max_length=9)
+    sources: list[Literal['github', 'github_issues', 'stackoverflow', 'hackernews', 'superuser', 'workplace', 'n8n', 'make', 'nodered', 'v2ex', 'arxiv']] = Field(default=['github'], min_length=1, max_length=11)
 
 
 def clean(text):
@@ -1080,3 +1082,7 @@ def pair_review(batch_id: str, body: PairReview, request: Request):
     with connect() as db:
         db.execute('INSERT OR REPLACE INTO pair_reviews VALUES (?,?,?,?,?)', (batch_id, left, right, request.state.user['username'], body.same_topic))
     return {'ok': True}
+
+
+# Offline research pipeline with separate, versioned experiment history.
+local_routes.install(app, connect, get_records, require_usable_batch, ROOT, sources, csv_download)

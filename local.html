@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>本地程序分析</title><link rel="stylesheet" href="/style.css"><script src="/local-ui.js?v=1" defer></script></head>
+<body><main style="max-width:1200px;margin:auto;padding:24px"><header><h1>本地程序分析</h1><a href="/">返回采集与历史模型结果</a></header>
+<p>规则判别 → 标签词典分类 → LSA 潜在语义聚类 → 公式评分。无需 API Key，不调用外部生成式模型。</p>
+<p class="hint">当前为可解释研究基线：LSA 根据本批次词语共现学习，不能保证跨语言同义理解；规则分数不是概率。方法、参数及评价需要团队独立审查。</p>
+<section class="panel"><h2>选择已采集批次</h2><label>研究批次<select id="batch"></select></label><p id="batch-info"></p>
+<form id="run-form" class="grid-form"><label>方向词（逗号分隔，可留空使用研究方向）<input id="direction-terms" maxlength="2000" placeholder="例如：会议,meeting,minutes"></label>
+<label>规则阈值<input id="threshold" type="number" value="0.7" min="0" max="1" step="0.05" required></label>
+<label>聚类距离阈值（越大越容易合并）<input id="distance" type="number" value="0.65" min="0.05" max="1.5" step="0.05" required></label>
+<label>LSA 最大维数<input id="dimensions" type="number" value="32" min="2" max="128" required></label>
+<label>来源覆盖权重<input id="coverage" type="number" value="0.6" min="0" max="1" step="0.05" required></label>
+<label>记录规模权重<input id="scale" type="number" value="0.4" min="0" max="1" step="0.05" required></label>
+<button id="start" class="full">开始本地分析（不产生模型 API 费用）</button></form>
+<p class="hint">每次运行保留独立实验记录，使用所选批次已采集的完整文本。方向词用于相关性筛选，不会重新采集数据。更换需求应返回主页新建采集批次。</p>
+<p id="notice" role="status" aria-live="polite"></p><label>本批次实验历史<select id="runs"></select></label></section>
+<section id="result" class="panel"><p>请选择批次并开始分析，或查看已有本地实验。</p></section></main></body></html>

@@ -4,3 +4,14 @@ __pycache__/
 .env
 .venv/
 backups/
+
+# Local credentials, runtime outputs and research data
+*.sqlite*
+*.db
+*.log
+.env.*
+analysis-access-code.txt
+*secret*
+*apikey*
+*api-key*
+local-analysis-backup*/

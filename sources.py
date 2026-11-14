@@ -10,7 +10,7 @@ import source_policy
 
 NAMES = {'github': 'GitHub', 'github_issues': 'GitHub', 'stackoverflow': 'Stack Overflow',
          'hackernews': 'Hacker News', 'superuser': 'Super User', 'workplace': 'The Workplace',
-         'n8n': 'n8n Community', 'make': 'Make Community', 'nodered': 'Node-RED Forum'}
+         'n8n': 'n8n Community', 'make': 'Make Community', 'nodered': 'Node-RED Forum', 'v2ex':'V2EX', 'arxiv':'arXiv'}
 STACK_SITES = {'stackoverflow', 'superuser', 'workplace'}
 _guard = threading.Lock()
 _cooldown = {}
@@ -93,6 +93,9 @@ def fetch(source, query, limit, days, window_end=None):
     if window_end.tzinfo is None:
         raise ValueError('采集窗口必须包含时区')
     window_end = window_end.astimezone(timezone.utc).replace(microsecond=0)
+    if source in ('v2ex', 'arxiv'):
+        from extended_sources import fetch as fetch_extended
+        return fetch_extended(source, query, limit, days, window_end)
     if source in ('n8n', 'make', 'nodered'):
         from forum_sources import fetch_forum
         return fetch_forum(source, query, limit, days, window_end=window_end)

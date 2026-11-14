@@ -1,0 +1,166 @@
+"""Separate offline experiment history; legacy model results are never overwritten."""
+import hashlib
+import json
+import threading
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+from fastapi import BackgroundTasks, HTTPException, Request
+from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+import local_analysis
+
+RUN_LOCK = threading.Lock()
+
+
+class LocalConfig(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    threshold: float = Field(default=.7, ge=0, le=1, allow_inf_nan=False)
+    distance_threshold: float = Field(default=.65, ge=.05, le=1.5, allow_inf_nan=False)
+    dimensions: int = Field(default=32, ge=2, le=128)
+    coverage_weight: float = Field(default=.6, ge=0, le=1, allow_inf_nan=False)
+    scale_weight: float = Field(default=.4, ge=0, le=1, allow_inf_nan=False)
+    direction_terms: str = Field(default='', max_length=2000)
+
+    @model_validator(mode='after')
+    def weights(self):
+        if self.coverage_weight + self.scale_weight <= 0:
+            raise ValueError('两个评分权重不能同时为0')
+        return self
+
+
+def init(db):
+    db.execute('''CREATE TABLE IF NOT EXISTS local_runs (
+        id TEXT PRIMARY KEY, batch_id TEXT NOT NULL REFERENCES batches(id),
+        created_at TEXT NOT NULL, status TEXT NOT NULL, config TEXT NOT NULL,
+        result TEXT NOT NULL DEFAULT '{}', error TEXT NOT NULL DEFAULT '')''')
+    db.execute("UPDATE local_runs SET status='failed',error='服务重启导致中断，请创建新的本地实验' WHERE status IN ('queued','running')")
+
+
+def install(app, connect, get_records, require_usable_batch, root, sources, csv_download):
+    def read_run(batch_id, run_id):
+        get_records(batch_id)
+        with connect() as db:
+            row = db.execute('SELECT * FROM local_runs WHERE batch_id=? AND id=?', (batch_id, run_id)).fetchone()
+        if not row:
+            raise HTTPException(404, '本批次不存在该本地实验')
+        item = dict(row)
+        item['config'], item['result'] = json.loads(item['config']), json.loads(item['result'])
+        return item
+
+    def finished(batch_id, run_id):
+        require_usable_batch(batch_id)
+        row = read_run(batch_id, run_id)
+        if row['status'] != 'complete':
+            raise HTTPException(409, '本地实验尚未完成')
+        return row
+
+    def worker(run_id, batch, records, config, source_count):
+        try:
+            with connect() as db:
+                db.execute("UPDATE local_runs SET status='running' WHERE id=?", (run_id,))
+            result = local_analysis.analyze(batch, records, config, source_count)
+            result['source_code_sha256'] = hashlib.sha256(Path(local_analysis.__file__).read_bytes()).hexdigest()
+            # Retain the exact inputs used by this run, not a future mutable database view.
+            result['input_records'] = records
+            with connect() as db:
+                db.execute("UPDATE local_runs SET status='complete',result=? WHERE id=?",
+                           (json.dumps(result, ensure_ascii=False, allow_nan=False), run_id))
+        except Exception as error:
+            with connect() as db:
+                db.execute("UPDATE local_runs SET status='failed',error=? WHERE id=?", (str(error), run_id))
+        finally:
+            RUN_LOCK.release()
+
+    @app.get('/local')
+    def page():
+        return FileResponse(root / 'local.html')
+
+    @app.get('/local-ui.js')
+    def javascript():
+        return FileResponse(root / 'local-ui.js', media_type='application/javascript')
+
+    @app.get('/api/batches/{batch_id}/local-runs')
+    def history(batch_id: str):
+        get_records(batch_id)
+        with connect() as db:
+            return [dict(r) for r in db.execute('SELECT id,batch_id,created_at,status,config,error FROM local_runs WHERE batch_id=? ORDER BY created_at DESC', (batch_id,))]
+
+    @app.get('/api/batches/{batch_id}/local-runs/{run_id}')
+    def detail(batch_id: str, run_id: str):
+        return read_run(batch_id, run_id)
+
+    @app.post('/api/batches/{batch_id}/local-runs', status_code=202)
+    def start(batch_id: str, body: LocalConfig, request: Request, background: BackgroundTasks):
+        user = getattr(request.state, 'user', None)
+        if not user or user.get('role') not in ('admin', 'researcher'):
+            raise HTTPException(403, '研究员或管理员才能启动本地分析')
+        require_usable_batch(batch_id)
+        batch, records = get_records(batch_id)
+        if batch['status'] != 'collected' or not records:
+            raise HTTPException(409, '请先完成采集；部分失败批次应先复制完整成功来源')
+        if len(records) > local_analysis.MAX_RECORDS or sum(len(r['content']) for r in records) > local_analysis.MAX_CHARACTERS:
+            raise HTTPException(413, '本地分析最多5000条、合计2000万字符；未截断输入')
+        with connect() as db:
+            row = db.execute('SELECT sources FROM batch_options WHERE batch_id=?', (batch_id,)).fetchone()
+        selected = json.loads(row[0]) if row else []
+        source_count = len({sources.NAMES.get(k, k) for k in selected}) or len({r['source'] for r in records})
+        if not RUN_LOCK.acquire(blocking=False):
+            raise HTTPException(409, '已有本地分析任务运行，请完成后再试')
+        try:
+            run_id = 'L'+uuid.uuid4().hex[:16].upper()
+            config = body.model_dump()
+            with connect() as db:
+                db.execute('INSERT INTO local_runs(id,batch_id,created_at,status,config) VALUES (?,?,?,?,?)',
+                           (run_id, batch_id, datetime.now(timezone.utc).isoformat(), 'queued', json.dumps(config)))
+            background.add_task(worker, run_id, batch, records, config, source_count)
+        except Exception:
+            RUN_LOCK.release()
+            raise
+        return {'id': run_id, 'batch_id': batch_id, 'status': 'queued'}
+
+    @app.get('/api/batches/{batch_id}/local-runs/{run_id}/evidence.json')
+    def evidence(batch_id: str, run_id: str):
+        return finished(batch_id, run_id)
+
+    @app.get('/api/batches/{batch_id}/local-runs/{run_id}/result{number}.csv')
+    def export(batch_id: str, run_id: str, number: int):
+        result = finished(batch_id, run_id)['result']
+        if number == 1:
+            header = ['采集批次号','记录编号','来源网站','来源链接','内容','发布时间','星标数']
+            rows = [[batch_id,r['id'],r['source'],r['url'],r['content'],r['published_at'],r['stars']] for r in result['input_records']]
+        elif number == 2:
+            header = ['采集批次号','记录编号','是否构成机会','机会置信度','功能类别','所属行业']
+            rows = [[batch_id,rid,j['opportunity'],j['confidence'],j['function'],j['industry']] for rid,j in result['judgments'].items()]
+        elif number == 3:
+            header = ['采集批次号','主题簇编号','主题簇名称','功能类别','所属行业','簇内机会记录数','来源覆盖','簇内机会记录']
+            rows = [[batch_id,c['id'],c['name'],c['function'],c['industry'],c['count'],'；'.join(c['sources']),'；'.join(c['records'])] for c in result['clusters']]
+        elif number == 4:
+            header = ['采集批次号','主题簇编号','主题簇名称','功能类别','所属行业','机会价值分','优先级']
+            rows = [[batch_id,c['id'],c['name'],c['function'],c['industry'],c['score'],c['priority']] for c in result['clusters']]
+        else:
+            raise HTTPException(404, '结果编号必须是1至4')
+        return csv_download(header, rows, f'result{number}.csv')
+
+    @app.get('/api/batches/{batch_id}/local-runs/{run_id}/proposal/{cluster_id}.md')
+    def proposal(batch_id: str, run_id: str, cluster_id: str):
+        result = finished(batch_id, run_id)['result']
+        cluster = next((c for c in result['clusters'] if c['id'] == cluster_id), None)
+        if cluster is None:
+            raise HTTPException(404, '主题不存在')
+        rows = {r['id']: r for r in result['input_records']}
+        text = [f"# {cluster['name']}", '', f'批次：{batch_id}；实验：{run_id}',
+                '', '程序整理的立项研究提纲，非经过市场验证的策划案。',
+                '', '## 目标用户与痛点原文']
+        for rid in cluster['records']:
+            j = result['judgments'][rid]
+            text += [f"- {rid}：{j['user_evidence']}", f"  需求：{j['need_evidence']}"]
+        text += ['', '## 核心功能与技术路线', f"候选功能类别：{cluster['function']}。具体需求边界、技术选型及可行性须独立验证。",
+                 '', '## 实施周期与子任务', '周期未估计：先核对需求与原文，再设计最小原型、评估质量与成本，最后制定实施排期。',
+                 '', '## 价值评分', f"样本内价值分 {cluster['score']}，优先级 {cluster['priority']}。", result['score_formula'],
+                 '', '## 依据来源']
+        for rid in cluster['records']:
+            text.append(f"- {rid} · {rows[rid]['source']} · {rows[rid]['url']}")
+        return Response('\n'.join(text), media_type='text/markdown', headers={'Content-Disposition':'attachment; filename="proposal.md"'})
