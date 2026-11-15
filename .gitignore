@@ -15,3 +15,6 @@ analysis-access-code.txt
 *apikey*
 *api-key*
 local-analysis-backup*/
+models/
+*.onnx
+*.part

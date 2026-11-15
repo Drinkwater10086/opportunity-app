@@ -25,3 +25,5 @@ python -m uvicorn app:app --host 127.0.0.1 --port 8000
 新增V2EX最新公开主题、arXiv当日AI摘要来源。后者仅作技术背景，不单独当作需求机会。订阅源不支持历史全站搜索；图片、PDF及音视频尚未自动转换。
 
 运行测试：`python -m pytest -q`（安装requirements-dev.txt中的测试依赖）。
+
+可选本地E5语义向量已加入对照实验：先按[方法说明](LOCAL_ANALYSIS.md)准备模型和可选依赖，再在本地分析页选择。默认方法仍为LSA；不会自动联网下载、调用付费API或以模型输出代替规则判别。

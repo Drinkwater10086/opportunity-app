@@ -1,11 +1,13 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>本地程序分析</title><link rel="stylesheet" href="/style.css"><script src="/local-ui.js?v=3-planning" defer></script></head>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>本地程序分析</title><link rel="stylesheet" href="/style.css"><script src="/local-ui.js?v=4-local-semantic" defer></script></head>
 <body><main style="max-width:1200px;margin:auto;padding:24px"><header><h1>本地程序分析</h1><a href="/">返回采集与历史模型结果</a></header>
-<p>规则判别 → 标签词典分类 → LSA 潜在语义聚类 → 公式评分。无需 API Key，不调用外部生成式模型。</p>
-<p class="hint">当前为可解释研究基线：LSA 根据本批次词语共现学习，不能保证跨语言同义理解；规则分数不是概率。方法、参数及评价需要团队独立审查。</p>
+<p>规则判别 → 标签词典分类 → 本地文本向量与聚类 → 公式评分。无需 API Key，不调用外部生成式模型。</p>
+<p class="hint">可比较TF-IDF、LSA和可选的本地多语言E5语义特征；E5需先准备模型文件，使用情况须披露。规则分数不是概率，语义模型不保证业务判断正确。方法、参数及评价需要团队独立审查。</p>
 <section class="panel"><h2>选择已采集批次</h2><label>研究批次<select id="batch"></select></label><p id="batch-info"></p>
 <form id="run-form" class="grid-form"><label>方向词（逗号分隔，可留空使用研究方向）<input id="direction-terms" maxlength="2000" placeholder="例如：会议,meeting,minutes"></label>
 <label>规则阈值<input id="threshold" type="number" value="0.7" min="0" max="1" step="0.05" required></label>
+<label>文本向量方法<select id="vector-method"><option value="lsa">LSA（原有本地方法）</option><option value="tfidf">TF-IDF（词面基线）</option><option value="e5">E5多语言句向量（需本地模型）</option></select></label>
+<label>E5距离阈值（仅E5生效，须独立调参）<input id="semantic-distance" type="number" value="0.15" min="0.01" max="0.8" step="0.01" required></label>
 <label>聚类距离阈值（越大越容易合并）<input id="distance" type="number" value="0.65" min="0.05" max="1.5" step="0.05" required></label>
 <label>LSA 最大维数<input id="dimensions" type="number" value="32" min="2" max="128" required></label>
 <label>来源覆盖权重<input id="coverage" type="number" value="0.6" min="0" max="1" step="0.05" required></label>

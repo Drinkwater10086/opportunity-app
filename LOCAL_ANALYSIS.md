@@ -54,3 +54,16 @@
 每个主题可编辑目标用户、痛点、核心功能、技术路线、周期、子任务、资源和验收标准；新增local_plans表保留每次修订、作者和时间，原实验不覆盖。Markdown导出包含最新计划、原文证据、来源、采集时间、价值分、算法版本和输入哈希。空项明确待补充，填写的周期和技术路线为团队假设，不代表已经完成验证。
 
 补充v2.1：避免历史无换行长表格作为一个巨大句子，增加全覆盖分片及原文位置验证；主分组与基线分组均报告在相同完整原文TF-IDF空间的轮廓系数，便于同空间比较，仍不能视为语义正确性。
+
+
+## 可选本地多语言句向量（v3）
+
+保留默认LSA及TF-IDF词面基线，新增显式选项E5。它仅生成文本特征，不生成机会判断、聚类成员或市场结论；后续仍是程序的层次聚类和公式评分。预训练组件不代表团队原创算法，许可不等于赛事方认可，须在AI使用报告中如实披露。
+
+准备依赖：`python -m pip install -r requirements-semantic.txt`；本机已有对应版本时无需重复安装。显式下载：`python setup_semantic_model.py`。若当前电脑使用本地代理，可运行 `python setup_semantic_model.py --proxy http://127.0.0.1:10808`，不会更改Git或系统全局代理。默认模型在本项目models/e5-small；可用仅后端环境变量OPPORTUNITY_E5_DIR指定已有本地目录。网页不会下载模型、访问远程推理或自动退回其他方法。
+
+固定模型：intfloat/multilingual-e5-small，revision 614241f622f53c4eeff9890bdc4f31cfecc418b3，MIT；官方量化文件onnx/model_qint8_avx512_vnni.onnx（约118MB）。文件哈希、运行库版本、token分片覆盖和量化限制均写入结果。模型与分词器数据不进Git。官方依据：https://huggingface.co/intfloat/multilingual-e5-small ，https://huggingface.co/intfloat/multilingual-e5-small/tree/main/onnx 。
+
+按官方建议聚类输入加query前缀，attention-mask均值池化、L2归一化。模型上限512token：原文本先分为480token、重叠32token的全覆盖分片，各片推理后按token数加权平均再归一化，未静默截断。长文均值可能稀释局部语义。ONNX仅CPU执行，限制2线程、批大小8；最多20000个语义分片，超出报错。
+
+E5余弦距离分布与TF-IDF不同，因此使用独立阈值semantic_distance_threshold（初始工程值0.15，未经本任务最优化）；页面同时输出0.05/0.1/0.15/0.2/0.25固定网格，不自动挑选“最高分”替换主结果。主分组与基线都在相同完整原文词面空间评价，另报告基线在主表示空间的评价。不同空间的轮廓系数不能直接相比。初步中英文合成探针发现同语言偏好及跨业务高相似度，不能宣称模型已经解决跨语言聚类。

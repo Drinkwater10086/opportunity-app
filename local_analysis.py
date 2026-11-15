@@ -8,6 +8,7 @@ import json
 import re
 import math
 import local_preprocessing as preprocessing
+import local_embeddings
 from collections import Counter
 
 import numpy as np
@@ -21,7 +22,7 @@ from sklearn.preprocessing import normalize
 
 from analysis_engine import FUNCTIONS, INDUSTRIES, rank_clusters
 
-VERSION = 'local-rules-lsa-v2.1-bounded-context'
+VERSION = 'local-rules-v3-local-semantic'
 SEED = 42
 MAX_RECORDS = 5000
 MAX_CHARACTERS = 20_000_000
@@ -216,7 +217,11 @@ def diagnostic(distances, labels):
         else:
             score = float(silhouette_score(distances, labels, metric='precomputed'))
             reason = '内部几何指标，不是准确率，也不证明业务语义正确'
-    return {'sample_count': n, 'cluster_count': len(counts), 'silhouette': score, 'reason': reason,
+    warnings=[]
+    if n and len(counts)==1:warnings.append('全部候选被合为一个簇，无法证明主题区分能力')
+    if n>=3 and max(counts.values(),default=0)/n>.8:warnings.append('最大簇超过80%，可能存在过度合并')
+    if n>=3 and sum(v==1 for v in counts.values())/n>.5:warnings.append('超过半数候选各成单簇，可能存在过度拆分')
+    return {'sample_count': n, 'cluster_count': len(counts), 'silhouette': score, 'reason': reason,'warnings':warnings,
             'singleton_count': sum(v == 1 for v in counts.values()),
             'singleton_fraction': sum(v == 1 for v in counts.values()) / max(n, 1),
             'largest_cluster_fraction': max(counts.values(), default=0) / max(n, 1)}
@@ -267,6 +272,9 @@ def analyze(batch, records, config, source_count):
                       for key in ('relevant', 'real_need', 'ai_core', 'feasible')},
                   'note': '没有人工真值，不报告准确率或F1。ARI比较距离阈值扰动下的分组，不是独立重复运行或正确性。规则分数为条件加权，硬门槛可能使阈值变化不改变候选数。'}
     clusters, representation = [], '无候选，不构建向量'
+    embedding_metadata = None
+    vector_method = config.get('vector_method','lsa')
+    cluster_threshold = config.get('semantic_distance_threshold',.15) if vector_method=='e5' else config['distance_threshold']
     duplicates = preprocessing.duplicate_groups([], np.zeros((0,0)))
     if positives:
         vectorizer = TfidfVectorizer(analyzer='char', ngram_range=(2, 4), max_features=20000,
@@ -277,8 +285,11 @@ def analyze(batch, records, config, source_count):
         vectors = x
         # Reduction needs a meaningful smaller dimension; tiny batches stay lexical explicitly.
         dimensions = min(config['dimensions'], max(2, (len(positives)-1)//2), x.shape[1]-1)
-        representation = 'TF-IDF（候选少于8条，未执行LSA以避免极低维度过度合并）'
-        if len(positives) >= 8 and dimensions >= 2:
+        representation = 'TF-IDF词面向量' if vector_method=='tfidf' else 'TF-IDF（候选少于8条，未执行LSA以避免极低维度过度合并）'
+        if vector_method=='e5':
+            vectors, embedding_metadata = local_embeddings.embed([judgments[r['id']]['analysis_text'] for r in positives])
+            representation = '本地multilingual-e5-small量化ONNX句向量（预训练语义特征）；非生成式分析'
+        elif vector_method=='lsa' and len(positives) >= 8 and dimensions >= 2:
             svd = TruncatedSVD(n_components=dimensions, random_state=SEED)
             vectors = normalize(svd.fit_transform(x))
             if np.any(np.linalg.norm(vectors, axis=1) < 1e-12):
@@ -289,14 +300,20 @@ def analyze(batch, records, config, source_count):
         original_vectors = TfidfVectorizer(analyzer='char', ngram_range=(2,4), max_features=20000, sublinear_tf=True).fit_transform([r['content'] for r in positives])
         original_distances = distances_for(original_vectors)
         duplicates = preprocessing.duplicate_groups(positives, original_distances)
-        labels = partition(distances, config['distance_threshold'])
+        labels = partition(distances, cluster_threshold)
         base_labels = partition(baseline_distances, config['distance_threshold'])
         evaluation['primary'] = diagnostic(distances, labels)
         evaluation['baseline'] = diagnostic(baseline_distances, base_labels)
+        evaluation['baseline_in_primary_space'] = diagnostic(distances, base_labels)
         evaluation['primary_in_lexical_space'] = diagnostic(original_distances, labels)
         evaluation['baseline_in_full_text_space'] = diagnostic(original_distances, base_labels)
         evaluation['baseline_labels'] = dict(zip([r['id'] for r in positives], map(int, base_labels)))
-        for threshold in sorted({max(.05, config['distance_threshold']-.1), min(1.5, config['distance_threshold']+.1)}):
+        if vector_method=='e5':
+            evaluation['semantic_threshold_grid'] = [
+                {'distance_threshold':threshold,**diagnostic(distances,partition(distances,threshold))}
+                for threshold in (.05,.1,.15,.2,.25)]
+        perturbation = .03 if vector_method=='e5' else .1
+        for threshold in sorted({max(.01, cluster_threshold-perturbation), min(1.5, cluster_threshold+perturbation)}):
             other = partition(distances, threshold)
             evaluation['sensitivity'].append({'distance_threshold': threshold,
                 'ari': float(adjusted_rand_score(labels, other)) if len(labels) >= 2 else None,
@@ -336,6 +353,7 @@ def analyze(batch, records, config, source_count):
     return {'version': VERSION, 'sklearn_version': sklearn.__version__, 'seed': SEED,
             'input_sha256': hashlib.sha256(signature.encode()).hexdigest(), 'config': config,
             'representation': representation, 'judgments': judgments, 'clusters': clusters,
+            'embedding_metadata': embedding_metadata, 'effective_distance_threshold': cluster_threshold,
             'evaluation': evaluation, 'record_count': len(records), 'candidate_count': len(positives),
             'exclusions': dict(exclusions), 'source_count': source_count, 'duplicate_diagnostics': duplicates,
             'preprocessing_version': preprocessing.VERSION,

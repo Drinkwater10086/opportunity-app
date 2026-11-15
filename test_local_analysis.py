@@ -124,6 +124,9 @@ def test_routes_no_key_isolation_exports_and_legacy_untouched(tmp_path):
         assert client.get('/local').status_code == 200
         assert client.get('/local-ui.js').status_code == 200
         assert client.post('/api/batches/B1/local-runs',json={'scale_weight':0,'coverage_weight':0}).status_code == 422
+        assert client.post('/api/batches/B1/local-runs',json={'vector_method':'unknown'}).status_code == 422
+        with patch.object(app.local_routes.local_embeddings,'available',return_value=False):
+            assert client.post('/api/batches/B1/local-runs',json={'vector_method':'e5'}).status_code == 409
         assert client.post('/api/batches/B1/local-runs',json={},headers={'origin':'https://evil.example'}).status_code == 403
         RUN_LOCK.acquire()
         try:

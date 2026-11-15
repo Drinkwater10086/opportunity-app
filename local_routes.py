@@ -5,6 +5,7 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 from fastapi import BackgroundTasks, HTTPException, Request
 from fastapi.responses import FileResponse, Response
@@ -14,6 +15,7 @@ import local_analysis
 import local_preprocessing
 import local_comparison
 import local_planning
+import local_embeddings
 
 RUN_LOCK = threading.Lock()
 
@@ -26,6 +28,8 @@ class LocalConfig(BaseModel):
     coverage_weight: float = Field(default=.6, ge=0, le=1, allow_inf_nan=False)
     scale_weight: float = Field(default=.4, ge=0, le=1, allow_inf_nan=False)
     direction_terms: str = Field(default='', max_length=2000)
+    vector_method: Literal['lsa','tfidf','e5'] = 'lsa'
+    semantic_distance_threshold: float = Field(default=.15,ge=.01,le=.8,allow_inf_nan=False)
 
     @model_validator(mode='after')
     def weights(self):
@@ -70,7 +74,7 @@ def install(app, connect, get_records, require_usable_batch, root, sources, csv_
             result = local_analysis.analyze(batch, records, config, source_count)
             result['source_code_sha256'] = hashlib.sha256(Path(local_analysis.__file__).read_bytes()).hexdigest()
             result['source_hashes'] = {module.__name__: hashlib.sha256(Path(module.__file__).read_bytes()).hexdigest()
-                                       for module in (local_analysis, local_preprocessing, local_comparison, local_planning)}
+                                       for module in (local_analysis, local_preprocessing, local_comparison, local_planning, local_embeddings)}
             # Retain the exact inputs used by this run, not a future mutable database view.
             result['input_records'] = records
             with connect() as db:
@@ -107,6 +111,8 @@ def install(app, connect, get_records, require_usable_batch, root, sources, csv_
             raise HTTPException(403, '研究员或管理员才能启动本地分析')
         require_usable_batch(batch_id)
         batch, records = get_records(batch_id)
+        if body.vector_method=='e5' and not local_embeddings.available():
+            raise HTTPException(409,'本地E5模型未准备；请先运行setup_semantic_model.py，不会自动下载或换用其他算法')
         if batch['status'] != 'collected' or not records:
             raise HTTPException(409, '请先完成采集；部分失败批次应先复制完整成功来源')
         if len(records) > local_analysis.MAX_RECORDS or sum(len(r['content']) for r in records) > local_analysis.MAX_CHARACTERS:
