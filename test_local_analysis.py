@@ -127,6 +127,11 @@ def test_routes_no_key_isolation_exports_and_legacy_untouched(tmp_path):
         second = client.post('/api/batches/B1/local-runs',json={}).json()['id']
         assert second != rid
         assert len(client.get('/api/batches/B1/local-runs').json()) == 2
+        comparison=client.get(base+'/compare/'+second)
+        assert comparison.status_code==200
+        assert comparison.json()['same_input']
+        assert comparison.json()['ari_on_common_candidates']==1
+        assert client.get(base+'/compare/does-not-exist').status_code==404
         with app.connect() as db:
             db.execute("UPDATE batches SET status='partial' WHERE id='B2'")
         assert client.post('/api/batches/B2/local-runs',json={}).status_code == 409

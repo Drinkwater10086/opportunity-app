@@ -323,8 +323,8 @@ def analyze(batch, records, config, source_count):
             cluster['score_before_duplicate_adjustment'] = cluster['score']
         maximum=max(c['unique_evidence_count'] for c in clusters)
         for cluster in clusters:
-            cluster['scale_score'] = round(100*math.log1p(cluster['unique_evidence_count'])/math.log1p(maximum),4)
-            cluster['score'] = round((cluster['coverage_score']*config['coverage_weight']+cluster['scale_score']*config['scale_weight'])/(config['coverage_weight']+config['scale_weight']),4)
+            cluster['duplicate_adjusted_scale_score'] = round(100*math.log1p(cluster['unique_evidence_count'])/math.log1p(maximum),4)
+            cluster['duplicate_adjusted_score'] = round((cluster['coverage_score']*config['coverage_weight']+cluster['duplicate_adjusted_scale_score']*config['scale_weight'])/(config['coverage_weight']+config['scale_weight']),4)
         clusters.sort(key=lambda c:(-c['score'],c['id']))
         for index,cluster in enumerate(clusters,1):cluster['priority']=index
 
@@ -338,7 +338,7 @@ def analyze(batch, records, config, source_count):
             'evaluation': evaluation, 'record_count': len(records), 'candidate_count': len(positives),
             'exclusions': dict(exclusions), 'source_count': source_count, 'duplicate_diagnostics': duplicates,
             'preprocessing_version': preprocessing.VERSION,
-            'score_formula': '覆盖=100×簇内网站数/选定网站数；规模=100×log(1+簇内近重复组数)/log(1+最大簇近重复组数)，未分组记录各计1；来源覆盖仍是平台覆盖，不等同独立证据；按配置权重归一化加权',
+            'score_formula': '覆盖=100×簇内网站数/选定网站数；规模=100×log(1+簇记录数)/log(1+最大簇记录数)；近重复调整分仅作补充诊断，来源覆盖不等同独立证据；按配置权重归一化加权',
             'conclusion': f'{len(records)}条记录经规则筛选保留{len(positives)}条候选，形成{len(clusters)}个主题。'
                           '候选及排序仅为样本内研究线索，未验证市场需求或分类准确率。',
             'rules': {'patterns': PATTERNS, 'functions': FUNCTION_TERMS, 'industries': INDUSTRY_TERMS,

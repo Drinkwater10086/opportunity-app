@@ -75,4 +75,6 @@ def test_duplicate_adjustment_preserves_cluster_members_and_raw_count():
     assert result['duplicate_diagnostics']['duplicate_count']==2
     assert result['clusters'][0]['count']==3
     assert result['clusters'][0]['unique_evidence_count']==1
+    assert result['clusters'][0]['score']==result['clusters'][0]['score_before_duplicate_adjustment']
+    assert 'duplicate_adjusted_score' in result['clusters'][0]
     assert result['evaluation']['structure_valid']
