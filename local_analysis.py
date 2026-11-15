@@ -27,7 +27,7 @@ from sklearn.preprocessing import normalize
 
 from analysis_engine import FUNCTIONS, INDUSTRIES, rank_clusters
 
-VERSION = 'local-rules-v10-value-diagnostics'
+VERSION = 'local-rules-v11-screening-flow'
 SEED = 42
 MAX_RECORDS = 5000
 MAX_CHARACTERS = 20_000_000
@@ -327,6 +327,27 @@ def topic_name(members, representative, keywords, function):
             'name_evidence':None}
 
 
+def screening_flow(judgments,threshold):
+    """Disjoint removals in a declared display order, not a new classifier."""
+    remaining=set(judgments)
+    labels=[('quality','正文质量'),('relevant','研究方向相关性'),('real_need','肯定需求线索'),
+            ('context','用户或使用场景'),('ai_core','AI与需求关联'),('feasible','技术实现线索'),
+            ('classified','功能分类'),('not_excluded','内容类型排除'),('threshold','证据分阈值')]
+    stages=[]
+    for key,label in labels:
+        def passed(j):
+            if key=='not_excluded':return not j['excluded']
+            if key=='threshold':return j['confidence']>=threshold
+            return bool(j[key])
+        removed=sorted(rid for rid in remaining if not passed(judgments[rid]))
+        entered=len(remaining);remaining.difference_update(removed)
+        stages.append({'key':key,'label':label,'entered':entered,'removed':len(removed),
+                       'remaining':len(remaining),'removed_ids':removed})
+    return {'stages':stages,'record_count':len(judgments),'final_ids':sorted(remaining),
+            'matches_decisions':remaining=={rid for rid,j in judgments.items() if j['opportunity']},
+            'note':'按固定展示顺序累计筛选，各条记录只计入首次流失环节；其他不通过条件可能重叠。顺序不改变判别规则或结果。'}
+
+
 def analyze(batch, records, config, source_count):
     records = sorted(records, key=lambda r: r['id'])
     if len(records) > MAX_RECORDS or sum(len(r['content']) for r in records) > MAX_CHARACTERS:
@@ -423,6 +444,7 @@ def analyze(batch, records, config, source_count):
     tie_sizes={cid:len(group['cluster_ids']) for group in evaluation['value_diagnostics']['tie_groups'] for cid in group['cluster_ids']}
     for c in clusters:c['same_score_count']=tie_sizes.get(c['id'],1)
     evaluation['structure_valid'] = len(members) == len(set(members)) and set(members) == {r['id'] for r in positives}
+    evaluation['screening_flow']=screening_flow(judgments,config['threshold'])
     exclusions = Counter(reason for j in judgments.values() for reason in j['failed_checks'])
     signature = json.dumps({'direction': batch['direction'], 'records': records}, ensure_ascii=False, sort_keys=True)
     return {'version': VERSION, 'sklearn_version': sklearn.__version__, 'seed': SEED,

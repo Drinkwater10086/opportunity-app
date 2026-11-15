@@ -29,9 +29,9 @@ function evidenceInspector(result){
  const search=node('input');search.type='search';search.placeholder='记录编号、标题或原文关键词';search.setAttribute('aria-label','搜索记录');
  const filter=node('select');filter.setAttribute('aria-label','记录筛选');for(const [value,title] of [['all','全部记录'],['positive','候选机会'],['negative','未通过记录']]){const o=node('option',title);o.value=value;filter.append(o);}filter.value=result.candidate_count?'positive':'all';
  const status=node('p'),list=node('div'),controls=node('div'),previous=node('button','上一页'),next=node('button','下一页');status.setAttribute('role','status');controls.className='toolbar';controls.append(previous,next);root.append(search,filter,status,list,controls);
- let page=0,initialized=false,debounce=null;const size=20;
+ let page=0,initialized=false,debounce=null,stageIds=new Set();const size=20;
  function render(){initialized=true;const query=search.value.trim().toLowerCase();const rows=result.input_records.filter(record=>{
-  const j=result.judgments[record.id];return (filter.value==='all'||(filter.value==='positive'?j?.opportunity:!j?.opportunity))&&(!query||[record.id,record.title,record.content,record.source].some(v=>String(v??'').toLowerCase().includes(query)));
+  const j=result.judgments[record.id];return (filter.value==='all'||(filter.value==='stage'?stageIds.has(record.id):filter.value==='positive'?j?.opportunity:!j?.opportunity))&&(!query||[record.id,record.title,record.content,record.source].some(v=>String(v??'').toLowerCase().includes(query)));
  });const pages=Math.max(1,Math.ceil(rows.length/size));page=Math.min(page,pages-1);list.replaceChildren();
  for(const record of rows.slice(page*size,(page+1)*size)){const j=result.judgments[record.id],article=node('article');article.dataset.recordId=record.id;article.append(node('h3',`${record.id} · ${record.title}`),node('p',j?`${j.opportunity?'候选机会':'未通过'} · 机会证据分 ${j.confidence} · ${record.source}`:'无判别结果'));
   const d=disclosure('查看本条证据');let loaded=false;d.ontoggle=()=>{if(d.open&&!loaded){loaded=true;d.append(recordEvidence(record,j));}};article.append(d);list.append(article);
@@ -39,7 +39,7 @@ function evidenceInspector(result){
  status.textContent=rows.length?`匹配 ${rows.length} 条；第 ${page+1}/${pages} 页，显示 ${page*size+1}–${Math.min(rows.length,(page+1)*size)} 条。所有记录可查询或导出。`:'没有匹配记录。';previous.disabled=page===0;next.disabled=page>=pages-1;
  }
  root.ontoggle=()=>{if(root.open&&!initialized)render();};search.oninput=()=>{clearTimeout(debounce);debounce=setTimeout(()=>{page=0;render();},150);};filter.onchange=()=>{page=0;render();};previous.onclick=()=>{page--;render();};next.onclick=()=>{page++;render();};
- return {element:root,focus(id){root.open=true;search.value=id;filter.value='all';page=0;render();const entry=Array.from(list.children).find(n=>n.dataset.recordId===id);if(entry){entry.querySelector('details').open=true;entry.scrollIntoView({block:'start'});}}};
+ return {element:root,focusIds(ids,label){stageIds=new Set(ids);let option=Array.from(filter.options).find(o=>o.value==='stage');if(!option){option=node('option');option.value='stage';filter.append(option);}option.textContent='本环节排除：'+label;root.open=true;search.value='';filter.value='stage';page=0;render();root.scrollIntoView({block:'start'});},focus(id){root.open=true;search.value=id;filter.value='all';page=0;render();const entry=Array.from(list.children).find(n=>n.dataset.recordId===id);if(entry){entry.querySelector('details').open=true;entry.scrollIntoView({block:'start'});}}};
 }
 function evaluationDetails(result){
  const root=disclosure('实验评价、方法与限制');root.id='technical-evaluation';root.append(node('p',result.representation),node('p',`方法 ${result.version} · scikit-learn ${result.sklearn_version} · 随机种子 ${result.seed}`));
@@ -60,7 +60,13 @@ function report(result,base){
  box.append(node('p','机会证据分表示规则支持强度；主题价值分用于本批次相对排序，两者均不是准确率或市场规模。'));
  if(result.evaluation.value_diagnostics?.all_scores_equal)box.append(node('p','所有主题的正式价值分相同，当前两个评分维度无法区分优先价值；请结合原文证据决策，不将展示先后当作优劣。'));
  const downloads=node('div');downloads.className='toolbar';for(let n=1;n<=4;n++)downloads.append(link(`result${n}.csv`,base+`/result${n}.csv`));downloads.append(link('证据与实验参数',base+'/evidence.json'));box.append(downloads);
- const inspector=evidenceInspector(result);box.append(node('h2','机会主题与优先级'));
+ const inspector=evidenceInspector(result);
+ if(result.evaluation.screening_flow){const f=result.evaluation.screening_flow,flow=disclosure('查看筛选过程与流失记录');if(!result.candidate_count)flow.open=true;flow.append(node('p',f.note));
+  if(!f.matches_decisions)flow.append(node('p','筛选统计与已保存机会标记不一致，请核查本次实验。'));
+  for(const stage of f.stages){if(!stage.entered)continue;const line=node('p',`${stage.label}：进入${stage.entered}条，排除${stage.removed}条，保留${stage.remaining}条。`);if(stage.removed){const b=node('button',`查看${stage.label}排除的${stage.removed}条`);b.onclick=()=>inspector.focusIds(stage.removed_ids,stage.label);line.append(b);}flow.append(line);}const inactive=f.stages.filter(stage=>!stage.entered).length;if(inactive)flow.append(node('p',`后续${inactive}个环节的累计保留数均为0；完整统计可在“证据与实验参数”中查看。`));box.append(flow);
+ }
+ if(!result.candidate_count&&result.record_count>0&&result.exclusions.relevant===result.record_count)box.append(node('p','本批次全部记录未命中当前研究方向或场景词。采集检索词与研究方向分别生效，可核对方向词，或回主页用贴近研究方向的检索词新建采集批次。'));
+ box.append(node('h2','机会主题与优先级'));
  if(!result.clusters.length)box.append(node('p','当前没有记录同时满足方向、需求、AI与可落地证据及评分阈值。可在下方查询记录查看具体原因；空结果不会生成虚构机会。'));
  for(const c of result.clusters){const section=node('article');section.dataset.themeId=c.id;section.append(node('h3',`${c.priority}. ${c.name}`),node('p',`样本内价值分 ${c.score.toFixed(2)} · ${c.count}条记录 · ${c.function} / ${c.industry} · ${c.sources.join('、')}`));
   if((c.same_score_count??1)>1)section.append(node('p',`与另外${c.same_score_count-1}个主题同分；当前顺序按簇编号固定展示，不表示价值高低差异。`));
