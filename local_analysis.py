@@ -9,6 +9,8 @@ import re
 import math
 import local_preprocessing as preprocessing
 import local_embeddings
+import evidence_scoring
+from bisect import bisect_left
 from collections import Counter
 
 import numpy as np
@@ -22,7 +24,7 @@ from sklearn.preprocessing import normalize
 
 from analysis_engine import FUNCTIONS, INDUSTRIES, rank_clusters
 
-VERSION = 'local-rules-v3-local-semantic'
+VERSION = 'local-rules-v4-evidence-strength'
 SEED = 42
 MAX_RECORDS = 5000
 MAX_CHARACTERS = 20_000_000
@@ -93,18 +95,21 @@ def nearby_evidence(text):
     """Inspect all matches, including late passages in long documents."""
     needs = list(re.finditer(PATTERNS['need'], text, re.I))
     ai_matches = list(re.finditer(PATTERNS['ai'], text, re.I))
-    j = 0
+    positions=[m.start() for m in ai_matches]
+    best=None
     for need in needs:
-        while j < len(ai_matches) and ai_matches[j].start() < need.start()-600:
-            j += 1
-        if j < len(ai_matches) and abs(ai_matches[j].start()-need.start()) <= 600:
+        j=bisect_left(positions,need.start())
+        nearest=min((i for i in (j-1,j) if 0<=i<len(ai_matches)),key=lambda i:abs(ai_matches[i].start()-need.start()),default=None)
+        if nearest is not None and abs(ai_matches[nearest].start()-need.start()) <= 600:
+            ai=ai_matches[nearest]
             spans = []
-            for match in (need, ai_matches[j]):
+            for match in (need, ai):
                 start, end = max(0, match.start()-80), min(len(text), match.end()+120)
                 spans.append({'start':start,'end':end,'text':text[start:end],
                               'match_start':match.start(),'match_end':match.end(),'match':match.group()})
-            return spans
-    return None
+            rank=(evidence_scoring.need_signal(need.group())[0],-abs(ai.start()-need.start()),-need.start())
+            if best is None or rank>best[0]:best=(rank,spans)
+    return best[1] if best else None
 
 
 def label(text, dictionary, default):
@@ -120,6 +125,7 @@ def judge_window(record, direction, config):
     if paired:
         hits['need'], hits['ai'] = paired
     scope = terms(config.get('direction_terms', '')) or terms(direction)
+    direct_scope_hits=[term for term in scope if contains(text,term)]
     if '办公' in direction or 'office' in direction.lower():
         scope += terms(OFFICE)
     scope_hits = [term for term in scope if contains(text, term)]
@@ -132,24 +138,36 @@ def judge_window(record, direction, config):
     checks = {'quality': quality, 'relevant': bool(scope_hits), 'real_need': bool(hits['need']),
               'context': bool(hits['context']), 'ai_core': related_ai,
               'feasible': bool(hits['feasible']), 'classified': bool(function)}
-    weights = {'quality': .05, 'relevant': .15, 'real_need': .25, 'context': .15,
-               'ai_core': .20, 'feasible': .15, 'classified': .05}
-    score = round(sum(weights[k] for k, passed in checks.items() if passed), 4)
+    score,score_detail=evidence_scoring.strength(text,checks,hits,direct_scope_hits,scope_hits)
+    score_detail['components']['classified']['matched_terms']=[term for term in terms(FUNCTION_TERMS.get(function,'')) if contains(text,term)]
+    score_detail['raw_evidence_score']=score
+    score_detail['selected_method']=config.get('score_method','evidence_strength')
+    if config.get('score_method','evidence_strength')=='completeness':score=score_detail['completeness']
     excluded = bool(hits['exclude']) or supporting_only
+    score_detail['raw_selected_score']=score
+    if config.get('score_method','evidence_strength')=='evidence_strength':
+        cap=.2 if excluded else .49 if not all(checks.values()) else 1.
+        score=min(score,cap)
+        score_detail['score_cap']=cap
+        score_detail['cap_reason']='排除情形上限0.2' if excluded else '缺少硬条件上限0.49' if cap<1 else '硬条件完整，不附加限分'
+    score_detail['final_score']=score
     opportunity = int(all(checks.values()) and not excluded and score >= config['threshold'])
-    failures = [key for key, passed in checks.items() if not passed] + (['exclude'] if hits['exclude'] else []) + (['technical_context_only'] if supporting_only else [])
+    hard_failures = [key for key, passed in checks.items() if not passed] + (['exclude'] if hits['exclude'] else []) + (['technical_context_only'] if supporting_only else [])
+    failures=hard_failures+(['below_threshold'] if score<config['threshold'] else [])
     def quote(key):
         return hits[key]['text'] if hits[key] else ''
     return {**checks, 'opportunity': opportunity, 'excluded': excluded, 'confidence': score,
-            'score_kind': '规则完整性分数，非校准概率；全部硬条件通过才保留',
+            'score_kind': '启发式证据强度，非校准概率' if config.get('score_method','evidence_strength')=='evidence_strength' else '旧版条件完整性分数，非校准概率',
+            'score_detail':score_detail,'rule_completeness':score_detail['completeness'],
+            'gate_passed':not hard_failures,'hard_gate_failures':hard_failures,
             'function': function if opportunity else '', 'industry': industry if opportunity else '',
             'label_scores': {'function': function_scores, 'industry': industry_scores},
             'scope_terms': scope_hits, 'evidence_spans': hits, 'failed_checks': failures,
-            'reason': '规则条件全部满足，仍需验证语义正确性' if opportunity else '规则未通过：'+', '.join(failures),
+            'reason': '硬条件及证据评分阈值通过，仍需验证语义正确性' if opportunity else '未通过：'+', '.join(failures),
             'pain': quote('need'), 'target_user': quote('context'), 'evidence': quote('need'),
             'need_evidence': quote('need'), 'user_evidence': quote('context'),
             'ai_evidence': quote('ai'), 'feasibility_evidence': quote('feasible'),
-            'need_kind': 'explicit_request' if hits['need'] else 'none',
+            'need_kind': score_detail['need_kind'],
             'relevant_evidence': scope_hits}
 
 
@@ -168,24 +186,27 @@ def judge(record, direction, config):
         if signals < 3:
             continue
         result = judge_window({**record, 'content': window}, direction, config)
-        candidates.append((result['opportunity'], result['confidence'], -start, start, end, result))
-        # All retained scores are 1 under current hard gates; the earliest full match wins.
-        if result['opportunity']:
+        candidates.append((int(result['gate_passed']), result['confidence'], -start, start, end, result))
+        if config.get('score_method')=='completeness' and result['gate_passed']:
             break
     if not candidates and fallback:
         _, start, end, window = fallback
         result = judge_window({**record, 'content': window}, direction, config)
-        candidates.append((result['opportunity'], result['confidence'], -start, start, end, result))
+        candidates.append((int(result['gate_passed']), result['confidence'], -start, start, end, result))
     if candidates:
         _, _, _, start, end, result = max(candidates, key=lambda x:x[:3])
     else:
-        start, end = 0, len(original)
-        result = judge_window({**record, 'content': structured['text']}, direction, config)
+        start, end, window = next(preprocessing.windows(structured),(0,0,''))
+        result = judge_window({**record, 'content': window}, direction, config)
     for span in result['evidence_spans'].values():
         if span:
             for field in ('start','end','match_start','match_end'): span[field] += start
             span['text'] = original[span['start']:span['end']]
             span['match'] = original[span['match_start']:span['match_end']]
+    for component in result['score_detail']['components'].values():
+        for span in component['evidence']:
+            span['start']+=start;span['end']+=start
+            span['text']=original[span['start']:span['end']]
     for target, source in [('evidence','need'),('need_evidence','need'),('pain','need'),
                            ('user_evidence','context'),('target_user','context'),
                            ('ai_evidence','ai'),('feasibility_evidence','feasible')]:
@@ -218,7 +239,7 @@ def diagnostic(distances, labels):
             score = float(silhouette_score(distances, labels, metric='precomputed'))
             reason = '内部几何指标，不是准确率，也不证明业务语义正确'
     warnings=[]
-    if n and len(counts)==1:warnings.append('全部候选被合为一个簇，无法证明主题区分能力')
+    if n>=2 and len(counts)==1:warnings.append('全部候选被合为一个簇，无法证明主题区分能力')
     if n>=3 and max(counts.values(),default=0)/n>.8:warnings.append('最大簇超过80%，可能存在过度合并')
     if n>=3 and sum(v==1 for v in counts.values())/n>.5:warnings.append('超过半数候选各成单簇，可能存在过度拆分')
     return {'sample_count': n, 'cluster_count': len(counts), 'silhouette': score, 'reason': reason,'warnings':warnings,
@@ -264,13 +285,13 @@ def analyze(batch, records, config, source_count):
     empty = diagnostic(np.zeros((0, 0)), [])
     evaluation = {'primary': empty, 'baseline': empty, 'sensitivity': [],
                   'threshold_sensitivity': [{'threshold': t, 'candidate_count': sum(
-                      not j['failed_checks'] and j['confidence'] >= t for j in judgments.values())}
-                      for t in sorted({.5, .7, .9, config['threshold']})],
+                      j['gate_passed'] and j['confidence'] >= t for j in judgments.values())}
+                      for t in sorted({.5, .6, .7, .75, .8, .85, .9, .95, config['threshold']})],
                   'ablation': {key: sum(not j['excluded'] and all(j[k] for k in
                       ('quality','relevant','real_need','context','ai_core','feasible','classified') if k != key)
                       and j['confidence'] >= config['threshold'] for j in judgments.values())
                       for key in ('relevant', 'real_need', 'ai_core', 'feasible')},
-                  'note': '没有人工真值，不报告准确率或F1。ARI比较距离阈值扰动下的分组，不是独立重复运行或正确性。规则分数为条件加权，硬门槛可能使阈值变化不改变候选数。'}
+                  'note': '没有人工真值，不报告准确率或F1。ARI比较距离阈值扰动下的分组，不是独立重复运行或正确性。证据强度评分未经概率校准，阈值敏感性同时保留所有硬门槛；旧版完整性方法可能不随阈值变化。'}
     clusters, representation = [], '无候选，不构建向量'
     embedding_metadata = None
     vector_method = config.get('vector_method','lsa')

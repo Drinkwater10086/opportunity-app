@@ -16,6 +16,7 @@ import local_preprocessing
 import local_comparison
 import local_planning
 import local_embeddings
+import evidence_scoring
 
 RUN_LOCK = threading.Lock()
 
@@ -30,6 +31,7 @@ class LocalConfig(BaseModel):
     direction_terms: str = Field(default='', max_length=2000)
     vector_method: Literal['lsa','tfidf','e5'] = 'lsa'
     semantic_distance_threshold: float = Field(default=.15,ge=.01,le=.8,allow_inf_nan=False)
+    score_method: Literal['evidence_strength','completeness'] = 'evidence_strength'
 
     @model_validator(mode='after')
     def weights(self):
@@ -74,7 +76,7 @@ def install(app, connect, get_records, require_usable_batch, root, sources, csv_
             result = local_analysis.analyze(batch, records, config, source_count)
             result['source_code_sha256'] = hashlib.sha256(Path(local_analysis.__file__).read_bytes()).hexdigest()
             result['source_hashes'] = {module.__name__: hashlib.sha256(Path(module.__file__).read_bytes()).hexdigest()
-                                       for module in (local_analysis, local_preprocessing, local_comparison, local_planning, local_embeddings)}
+                                       for module in (local_analysis, local_preprocessing, local_comparison, local_planning, local_embeddings, evidence_scoring)}
             # Retain the exact inputs used by this run, not a future mutable database view.
             result['input_records'] = records
             with connect() as db:
