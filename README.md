@@ -27,6 +27,7 @@ python -m uvicorn app:app --host 127.0.0.1 --port 8000
 - [价值同分与权重敏感性](VALUE_DIAGNOSTICS.md)
 - [有原文依据的主题提炼](TOPIC_NAMING.md)
 - [策划初稿、证据与修订](PLANNING_DRAFTS.md)
+- [方向词控制与受控双语扩展](DIRECTION_SCOPE.md)
 - [AI协助事实记录草稿（待核实，非最终提交件）](AI_ASSISTANCE_DRAFT.md)
 
 新增V2EX最新公开主题、arXiv当日AI摘要来源。后者仅作技术背景，不单独当作需求机会。订阅源不支持历史全站搜索；图片、PDF及音视频尚未自动转换。

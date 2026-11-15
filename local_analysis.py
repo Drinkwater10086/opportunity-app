@@ -27,7 +27,7 @@ from sklearn.preprocessing import normalize
 
 from analysis_engine import FUNCTIONS, INDUSTRIES, rank_clusters
 
-VERSION = 'local-rules-v12-grounded-topic-names'
+VERSION = 'local-rules-v13-direction-scope'
 SEED = 42
 MAX_RECORDS = 5000
 MAX_CHARACTERS = 20_000_000
@@ -81,8 +81,31 @@ def terms(text):
 
 def contains(text, term):
     # ASCII word boundaries prevent AI matching "email" or RAG matching "storage".
-    pattern = r'(?<![a-z0-9])' + re.escape(term) + r'(?![a-z0-9])' if term.isascii() else re.escape(term)
-    return re.search(pattern, text, re.I) is not None
+    return re.search(evidence_scoring.term_pattern(term), text, re.I) is not None
+
+
+def direction_scope(direction,config):
+    explicit=terms(config.get('direction_terms',''))
+    if explicit:
+        return {'mode':'explicit','profile':None,'configured_terms':list(dict.fromkeys(explicit)),
+                'expanded_terms':[],'note':'仅使用显式方向词，不另加办公或行业扩展'}
+    def normalize(value):
+        value=re.sub(r'人工智能|智能|应用|场景|行业|方向|企业|自动化','',value,flags=re.I)
+        value=re.sub(r'(?<![a-z0-9_])(?:AI|applications?|industry|scenarios?|enterprise|automation)(?![a-z0-9_])','',value,flags=re.I)
+        return re.sub(r'[\s:：,，;；/]+','',value).casefold()
+    requested=terms(direction);normalized=normalize(direction)
+    if normalized in ('办公','office'):
+        return {'mode':'office_profile','profile':'办公','configured_terms':requested,
+                'expanded_terms':terms(OFFICE),'normalized_direction':normalized,
+                'note':'已识别通用办公方向，使用声明的中英场景词；额外限定词不会自动丢弃'}
+    for name,words in INDUSTRY_TERMS.items():
+        aliases=terms(words)
+        if aliases and normalized and normalized in {normalize(v) for v in [name]+aliases}:
+            return {'mode':'industry_profile','profile':name,'configured_terms':requested,
+                    'expanded_terms':list(dict.fromkeys([name]+aliases)),'normalized_direction':normalized,
+                    'note':'仅在规范化方向完整匹配已知行业名称或别名时扩展，不是自由语义推断'}
+    return {'mode':'literal','profile':None,'configured_terms':requested,'expanded_terms':[],
+            'normalized_direction':normalized,'note':'方向未完整匹配已知画像，保留原方向词，可显式提供中英检索方向词'}
 
 
 def evidence(text, pattern):
@@ -138,10 +161,9 @@ def judge_window(record, direction, config):
     paired = nearby_evidence(text)
     if paired:
         hits['need'], hits['ai'] = paired
-    scope = terms(config.get('direction_terms', '')) or terms(direction)
-    direct_scope_hits=[term for term in scope if contains(text,term)]
-    if '办公' in direction or 'office' in direction.lower():
-        scope += terms(OFFICE)
+    scope_definition=record.get('_direction_scope') or direction_scope(direction,config)
+    direct_scope_hits=[term for term in scope_definition['configured_terms'] if contains(text,term)]
+    scope=list(dict.fromkeys(scope_definition['configured_terms']+scope_definition['expanded_terms']))
     scope_hits = [term for term in scope if contains(text, term)]
     function, function_scores = label(text, FUNCTION_TERMS, '')
     industry, industry_scores = label(text, INDUSTRY_TERMS, '其他')
@@ -178,7 +200,7 @@ def judge_window(record, direction, config):
             'gate_passed':not hard_failures,'hard_gate_failures':hard_failures,
             'function': function if opportunity else '', 'industry': industry if opportunity else '',
             'label_scores': {'function': function_scores, 'industry': industry_scores},
-            'scope_terms': scope_hits, 'evidence_spans': hits, 'failed_checks': failures,
+            'scope_terms': scope_hits,'direction_scope':scope_definition, 'evidence_spans': hits, 'failed_checks': failures,
             'reason': '硬条件及证据评分阈值通过，仍需验证语义正确性' if opportunity else '未通过：'+', '.join(failures),
             'pain': quote('need'), 'target_user': quote('context'), 'evidence': quote('need'),
             'need_evidence': quote('need'), 'user_evidence': quote('context'),
@@ -194,6 +216,7 @@ def judge(record, direction, config):
     # in the full masked record; do not reinterpret title offsets as body offsets.
     record={**record,'_job_posting':context_rules.job_posting_status(record.get('title',''),structured['text'])}
     record['_compilation']=context_rules.compilation_status(record.get('title',''),structured['text'])
+    record['_direction_scope']=direction_scope(direction,config)
     candidates = []
     fallback = None
     for start, end, window in preprocessing.windows(structured):
@@ -487,6 +510,7 @@ def analyze(batch, records, config, source_count):
     signature = json.dumps({'direction': batch['direction'], 'records': records}, ensure_ascii=False, sort_keys=True)
     return {'version': VERSION, 'sklearn_version': sklearn.__version__, 'seed': SEED,
             'snapshot_schema_version':2,'direction':batch['direction'],
+            'direction_scope':direction_scope(batch['direction'],config),
             'runtime_versions':{'python':sys.version,'numpy':np.__version__,'sklearn':sklearn.__version__},
             'input_sha256': hashlib.sha256(signature.encode()).hexdigest(), 'config': config,
             'representation': representation, 'judgments': judgments, 'clusters': clusters,

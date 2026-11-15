@@ -60,6 +60,7 @@ function report(result,base){
  box.append(node('p','机会证据分表示规则支持强度；主题价值分用于本批次相对排序，两者均不是准确率或市场规模。'));
  if(result.evaluation.value_diagnostics?.all_scores_equal)box.append(node('p','所有主题的正式价值分相同，当前两个评分维度无法区分优先价值；请结合原文证据决策，不将展示先后当作优劣。'));
  const downloads=node('div');downloads.className='toolbar';for(let n=1;n<=4;n++)downloads.append(link(`result${n}.csv`,base+`/result${n}.csv`));downloads.append(link('证据与实验参数',base+'/evidence.json'));box.append(downloads);
+ if(result.direction_scope){const s=result.direction_scope,labels={explicit:'仅显式方向词',office_profile:'办公方向词典',industry_profile:'行业方向词典',literal:'原方向词，未扩展'},d=disclosure(`本次方向范围：${labels[s.mode]??s.mode}${s.profile?' / '+s.profile:''}`);d.append(node('p','配置词：'+s.configured_terms.join('、')),node('p','扩展词：'+(s.expanded_terms.join('、')||'无')),node('p',s.note));box.append(d);}
  const sourceRecords=new Map(result.input_records.map(r=>[r.id,r]));
  const inspector=evidenceInspector(result);
  if(result.evaluation.screening_flow){const f=result.evaluation.screening_flow,flow=disclosure('查看筛选过程与流失记录');if(!result.candidate_count)flow.open=true;flow.append(node('p',f.note));

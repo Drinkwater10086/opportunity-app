@@ -5,7 +5,7 @@ no source popularity or generated rationale can increase evidence strength.
 """
 import re
 
-VERSION='evidence-strength-v1'
+VERSION='evidence-strength-v2-direction-scope'
 WEIGHTS={'quality':.05,'relevant':.15,'real_need':.25,'context':.15,
          'ai_core':.20,'feasible':.15,'classified':.05}
 REQUEST=r'有没有|求推荐|求助|\b(?:looking for|feature request|how can)\b'
@@ -21,6 +21,11 @@ def need_signal(value):
     return 0.,'none','无需求词依据'
 
 
+def term_pattern(term):
+    escaped=re.escape(term)
+    return r'(?<![a-z0-9])'+escaped+r'(?![a-z0-9])' if term.isascii() else escaped
+
+
 def strength(text,checks,hits,direct_scope_hits,scope_hits=()):
     values={key:0. for key in WEIGHTS}
     reasons={key:'未通过对应条件' for key in WEIGHTS}
@@ -33,9 +38,9 @@ def strength(text,checks,hits,direct_scope_hits,scope_hits=()):
     values['quality']=float(checks['quality']);reasons['quality']='至少30字符，仅长度门槛，不代表文本质量已验证'
     if checks['relevant']:
         values['relevant']=.95 if direct_scope_hits else .7
-        reasons['relevant']='直接命中配置方向词' if direct_scope_hits else '仅命中内置办公方向扩展词'
+        reasons['relevant']='直接命中配置方向词' if direct_scope_hits else '仅命中已声明的方向词典扩展词'
         for term in direct_scope_hits or scope_hits:
-            match=re.search(re.escape(term),text,re.I)
+            match=re.search(term_pattern(term),text,re.I)
             if match:supports['relevant'].append(support(match))
     signal=hits['need']['match'] if hits['need'] else ''
     value,kind,reason=need_signal(signal)
