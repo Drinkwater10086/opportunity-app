@@ -21,7 +21,7 @@ from sklearn.preprocessing import normalize
 
 from analysis_engine import FUNCTIONS, INDUSTRIES, rank_clusters
 
-VERSION = 'local-rules-lsa-v2-context'
+VERSION = 'local-rules-lsa-v2.1-bounded-context'
 SEED = 42
 MAX_RECORDS = 5000
 MAX_CHARACTERS = 20_000_000
@@ -191,7 +191,7 @@ def judge(record, direction, config):
         span=result['evidence_spans'][source]
         result[target]=span['text'] if span else ''
     result['selected_context']={'start':start,'end':end,'text':original[start:end],
-                                'method':'同段最多3个相邻句；上下文最长1200字符，超长单句完整保留'}
+                                'method':'同段最多3个相邻句；上下文最长1200字符；超长单句全覆盖分片，无截断'}
     result['analysis_text']=structured['text'][start:end]
     result['preprocessing']={k:v for k,v in structured.items() if k!='text'}
     result['evidence_sufficiency']={key:bool(result['evidence_spans'][key]) for key in ('need','context','ai','feasible')}
@@ -294,6 +294,7 @@ def analyze(batch, records, config, source_count):
         evaluation['primary'] = diagnostic(distances, labels)
         evaluation['baseline'] = diagnostic(baseline_distances, base_labels)
         evaluation['primary_in_lexical_space'] = diagnostic(original_distances, labels)
+        evaluation['baseline_in_full_text_space'] = diagnostic(original_distances, base_labels)
         evaluation['baseline_labels'] = dict(zip([r['id'] for r in positives], map(int, base_labels)))
         for threshold in sorted({max(.05, config['distance_threshold']-.1), min(1.5, config['distance_threshold']+.1)}):
             other = partition(distances, threshold)

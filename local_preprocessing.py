@@ -22,12 +22,22 @@ def structure(text):
             while start<end and view[start].isspace():start+=1
             while end>start and view[end-1].isspace():end-=1
             if start<end:
-                spans.append({'start':start,'end':end,'paragraph':paragraph.start()})
+                # Historical whitespace-flattened tables may be one enormous sentence.
+                # Cover every character with overlapping bounded units, never truncate.
+                cursor=start
+                while cursor<end:
+                    stop=min(end,cursor+1000)
+                    if stop<end:
+                        boundary=view.rfind(' ',cursor+700,stop)
+                        if boundary>cursor:stop=boundary
+                    spans.append({'start':cursor,'end':stop,'paragraph':paragraph.start()})
+                    if stop==end:break
+                    cursor=stop-150
     return {'text':view,'segments':spans,'excluded_spans':excluded,
             'quality':{'original_characters':len(text),'analysis_characters':sum(not c.isspace() for c in view),
                        'excluded_characters':sum(s['end']-s['start'] for s in excluded),
                        'has_paragraph_boundaries':'\n' in text,
-                       'note':'保留完整输入；代码块与Markdown引用只从判别视图屏蔽，历史已合并换行的数据无法恢复段落'}}
+                       'note':'保留完整输入；代码块与Markdown引用只从判别视图屏蔽；超长单句按1000字符覆盖分片、重叠150字符，历史段落无法恢复'}}
 
 
 def windows(structured):

@@ -31,6 +31,17 @@ def test_new_collection_cleaning_preserves_paragraphs_and_is_idempotent():
     assert clean(cleaned)==cleaned
 
 
+def test_long_unpunctuated_records_are_fully_covered_without_distant_evidence():
+    text='Our team needs meeting notes '+('background '*300)+' Whisper AI model API'
+    structured=prep.structure(text)
+    covered=set()
+    for s in structured['segments']:
+        assert s['end']-s['start']<=1000
+        covered.update(range(s['start'],s['end']))
+    assert len(covered)==len(text)
+    assert judge(text)['opportunity']==0
+
+
 def test_code_and_quotes_remain_traceable_but_not_demand():
     for text in ['```python\nOur team needs AI meeting transcription with Whisper model API.\n```',
                  '> Our team needs AI meeting transcription with Whisper model API.\n']:
