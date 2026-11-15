@@ -6,6 +6,8 @@ LSA is corpus-local latent semantics, not a pretrained multilingual encoder.
 import hashlib
 import json
 import re
+import math
+import local_preprocessing as preprocessing
 from collections import Counter
 
 import numpy as np
@@ -19,7 +21,7 @@ from sklearn.preprocessing import normalize
 
 from analysis_engine import FUNCTIONS, INDUSTRIES, rank_clusters
 
-VERSION = 'local-rules-lsa-v1'
+VERSION = 'local-rules-lsa-v2-context'
 SEED = 42
 MAX_RECORDS = 5000
 MAX_CHARACTERS = 20_000_000
@@ -58,7 +60,7 @@ INDUSTRY_TERMS = dict(zip(INDUSTRIES, [
 ]))
 OFFICE = '会议,邮件,审批,合同,办公,销售,人事,财务,meeting,email,approval,contract,office,knowledge base,sales,crm,human resources,invoice,payroll'
 PATTERNS = {
-    'need': r'有没有|求推荐|求助|需要|希望|耗时|费时|手动|无法|困难|痛点|重复录入|效率低|\b(?:need|looking for|struggl\w*|manual(?:ly)?|time.consuming|cannot|can.t|unable|problem|feature request|how (?:can|do|to))\b',
+    'need': r'有没有|求推荐|求助|需要|希望|耗时|费时|手动|无法|困难|痛点|重复录入|效率低|\b(?:needs?|needed|looking for|struggl\w*|manual(?:ly)?|time.consuming|cannot|can.t|unable|problem|feature request|how (?:can|do|to))\b',
     'ai': r'人工智能|大模型|语言模型|机器学习|语音识别|图像识别|\b(?:AI|LLMs?|GPT\w*|machine learning|Whisper|OCR|RAG|neural|language model)\b',
     'feasible': r'模型|识别|检索|转写|分类|预测|抽取|\b(?:API|model|OCR|Whisper|retrieval|transcri\w*|classif\w*|extract\w*|predict\w*)\b',
     'context': r'用户|员工|客户|团队|会议|文档|邮件|合同|报表|流程|患者|学生|教师|\b(?:users?|employees?|customers?|teams?|meetings?|documents?|emails?|contracts?|reports?|workflow|patients?|students?|teachers?|invoices?)\b',
@@ -110,7 +112,7 @@ def label(text, dictionary, default):
     return (best if scores[best] else default), scores
 
 
-def judge(record, direction, config):
+def judge_window(record, direction, config):
     text = record['content']
     hits = {key: evidence(text, pattern) for key, pattern in PATTERNS.items()}
     paired = nearby_evidence(text)
@@ -150,6 +152,53 @@ def judge(record, direction, config):
             'relevant_evidence': scope_hits}
 
 
+def judge(record, direction, config):
+    original = record['content']
+    structured = preprocessing.structure(original)
+    candidates = []
+    fallback = None
+    for start, end, window in preprocessing.windows(structured):
+        # Cheap prefilter: at least a demand/AI/context signal before dictionary evaluation.
+        if not re.search(PATTERNS['need'], window, re.I):
+            continue
+        signals = sum(bool(re.search(PATTERNS[key], window, re.I)) for key in ('ai','context','feasible'))
+        if fallback is None or signals > fallback[0]:
+            fallback = (signals, start, end, window)
+        if signals < 3:
+            continue
+        result = judge_window({**record, 'content': window}, direction, config)
+        candidates.append((result['opportunity'], result['confidence'], -start, start, end, result))
+        # All retained scores are 1 under current hard gates; the earliest full match wins.
+        if result['opportunity']:
+            break
+    if not candidates and fallback:
+        _, start, end, window = fallback
+        result = judge_window({**record, 'content': window}, direction, config)
+        candidates.append((result['opportunity'], result['confidence'], -start, start, end, result))
+    if candidates:
+        _, _, _, start, end, result = max(candidates, key=lambda x:x[:3])
+    else:
+        start, end = 0, len(original)
+        result = judge_window({**record, 'content': structured['text']}, direction, config)
+    for span in result['evidence_spans'].values():
+        if span:
+            for field in ('start','end','match_start','match_end'): span[field] += start
+            span['text'] = original[span['start']:span['end']]
+            span['match'] = original[span['match_start']:span['match_end']]
+    for target, source in [('evidence','need'),('need_evidence','need'),('pain','need'),
+                           ('user_evidence','context'),('target_user','context'),
+                           ('ai_evidence','ai'),('feasibility_evidence','feasible')]:
+        span=result['evidence_spans'][source]
+        result[target]=span['text'] if span else ''
+    result['selected_context']={'start':start,'end':end,'text':original[start:end],
+                                'method':'同段最多3个相邻句；上下文最长1200字符，超长单句完整保留'}
+    result['analysis_text']=structured['text'][start:end]
+    result['preprocessing']={k:v for k,v in structured.items() if k!='text'}
+    result['evidence_sufficiency']={key:bool(result['evidence_spans'][key]) for key in ('need','context','ai','feasible')}
+    result['data_quality']=structured['quality']
+    return result
+
+
 def partition(distances, threshold):
     if len(distances) < 2:
         return np.zeros(len(distances), dtype=int)
@@ -182,7 +231,7 @@ def distances_for(vectors):
 
 def topic_keywords(members):
     """Extract corpus terms. Each term has a recorded source; no generated evidence."""
-    stops = set('the and for with this that from have has are was were will would could should need needs using use used our their your can not how what when which into about model api team'.split())
+    stops = set('the and for with this that from have has are was were will would could should need needs using use used our their your can not how what when which into about model api team comments comment full issue issues github readme code example examples response token usage integration support please version also more some any all but its they them these those been being'.split())
     candidate_terms = set()
     for r in members:
         candidate_terms.update(w.lower() for w in re.findall(r'\b[A-Za-z][A-Za-z-]{2,}\b', r['content']) if w.lower() not in stops)
@@ -218,10 +267,11 @@ def analyze(batch, records, config, source_count):
                       for key in ('relevant', 'real_need', 'ai_core', 'feasible')},
                   'note': '没有人工真值，不报告准确率或F1。ARI比较距离阈值扰动下的分组，不是独立重复运行或正确性。规则分数为条件加权，硬门槛可能使阈值变化不改变候选数。'}
     clusters, representation = [], '无候选，不构建向量'
+    duplicates = preprocessing.duplicate_groups([], np.zeros((0,0)))
     if positives:
         vectorizer = TfidfVectorizer(analyzer='char', ngram_range=(2, 4), max_features=20000,
                                      sublinear_tf=True, norm='l2')
-        x = vectorizer.fit_transform([r['content'] for r in positives])
+        x = vectorizer.fit_transform([judgments[r['id']]['analysis_text'] for r in positives])
         if np.any(np.asarray(x.getnnz(axis=1)) == 0):
             raise ValueError('存在零向量，不能可靠聚类；未删除该记录')
         vectors = x
@@ -236,11 +286,14 @@ def analyze(batch, records, config, source_count):
             representation = f'字符TF-IDF + LSA({dimensions}维)；语料内潜在语义，非跨语言预训练模型'
         distances = distances_for(vectors)
         baseline_distances = distances_for(x)
+        original_vectors = TfidfVectorizer(analyzer='char', ngram_range=(2,4), max_features=20000, sublinear_tf=True).fit_transform([r['content'] for r in positives])
+        original_distances = distances_for(original_vectors)
+        duplicates = preprocessing.duplicate_groups(positives, original_distances)
         labels = partition(distances, config['distance_threshold'])
         base_labels = partition(baseline_distances, config['distance_threshold'])
         evaluation['primary'] = diagnostic(distances, labels)
         evaluation['baseline'] = diagnostic(baseline_distances, base_labels)
-        evaluation['primary_in_lexical_space'] = diagnostic(baseline_distances, labels)
+        evaluation['primary_in_lexical_space'] = diagnostic(original_distances, labels)
         evaluation['baseline_labels'] = dict(zip([r['id'] for r in positives], map(int, base_labels)))
         for threshold in sorted({max(.05, config['distance_threshold']-.1), min(1.5, config['distance_threshold']+.1)}):
             other = partition(distances, threshold)
@@ -255,7 +308,7 @@ def analyze(batch, records, config, source_count):
             representative = positives[medoid]
             function = Counter(judgments[r['id']]['function'] for r in members).most_common(1)[0][0]
             industry = Counter(judgments[r['id']]['industry'] for r in members).most_common(1)[0][0]
-            keywords = topic_keywords(members)
+            keywords = topic_keywords([{**r, 'content':judgments[r['id']]['analysis_text']} for r in members])
             title = '、'.join(k['term'] for k in keywords)
             clusters.append({'name': f'围绕{title[:60]}的{function}需求' if title else representative['title'][:90] or representative['content'][:90],
                              'name_method': '原文关键词按记录覆盖与标题命中提取，使用固定句式概括；须核对代表记录',
@@ -264,6 +317,17 @@ def analyze(batch, records, config, source_count):
                              'industry': industry, 'records': [r['id'] for r in members]})
         clusters = rank_clusters(clusters, positives, source_count,
                                  (config['coverage_weight'], config['scale_weight']))
+        duplicate_ids = {rid:g['representative_id'] for g in duplicates['groups'] for rid in g['records']}
+        for cluster in clusters:
+            cluster['unique_evidence_count'] = len({duplicate_ids.get(rid,rid) for rid in cluster['records']})
+            cluster['score_before_duplicate_adjustment'] = cluster['score']
+        maximum=max(c['unique_evidence_count'] for c in clusters)
+        for cluster in clusters:
+            cluster['scale_score'] = round(100*math.log1p(cluster['unique_evidence_count'])/math.log1p(maximum),4)
+            cluster['score'] = round((cluster['coverage_score']*config['coverage_weight']+cluster['scale_score']*config['scale_weight'])/(config['coverage_weight']+config['scale_weight']),4)
+        clusters.sort(key=lambda c:(-c['score'],c['id']))
+        for index,cluster in enumerate(clusters,1):cluster['priority']=index
+
     members = [rid for c in clusters for rid in c['records']]
     evaluation['structure_valid'] = len(members) == len(set(members)) and set(members) == {r['id'] for r in positives}
     exclusions = Counter(reason for j in judgments.values() for reason in j['failed_checks'])
@@ -272,8 +336,9 @@ def analyze(batch, records, config, source_count):
             'input_sha256': hashlib.sha256(signature.encode()).hexdigest(), 'config': config,
             'representation': representation, 'judgments': judgments, 'clusters': clusters,
             'evaluation': evaluation, 'record_count': len(records), 'candidate_count': len(positives),
-            'exclusions': dict(exclusions), 'source_count': source_count,
-            'score_formula': '覆盖=100×簇内网站数/选定网站数；规模=100×log(1+簇记录数)/log(1+最大簇记录数)；按配置权重归一化加权',
+            'exclusions': dict(exclusions), 'source_count': source_count, 'duplicate_diagnostics': duplicates,
+            'preprocessing_version': preprocessing.VERSION,
+            'score_formula': '覆盖=100×簇内网站数/选定网站数；规模=100×log(1+簇内近重复组数)/log(1+最大簇近重复组数)，未分组记录各计1；来源覆盖仍是平台覆盖，不等同独立证据；按配置权重归一化加权',
             'conclusion': f'{len(records)}条记录经规则筛选保留{len(positives)}条候选，形成{len(clusters)}个主题。'
                           '候选及排序仅为样本内研究线索，未验证市场需求或分类准确率。',
             'rules': {'patterns': PATTERNS, 'functions': FUNCTION_TERMS, 'industries': INDUSTRY_TERMS,

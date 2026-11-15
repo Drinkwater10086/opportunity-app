@@ -116,7 +116,9 @@ class BatchInput(BaseModel):
 
 def clean(text):
     text = unicodedata.normalize('NFKC', text)
-    return re.sub(r'\s+', ' ', re.sub(r'https?://\S+', '', text)).strip()
+    text = re.sub(r'https?://\S+', '', text).replace('\r\n', '\n').replace('\r', '\n')
+    text = re.sub(r'[^\S\n]+', ' ', text)
+    return re.sub(r'\n[ \t]*\n(?:[ \t]*\n)+', '\n\n', text).strip()
 
 
 def collect(batch_id):

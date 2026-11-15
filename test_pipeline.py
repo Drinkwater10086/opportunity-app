@@ -1,5 +1,6 @@
 """Synthetic fixtures only; do not store them in the application database."""
 import json
+import re
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -26,7 +27,7 @@ def judgment(evidence):
 
 def model_fixture(key, prompt, max_tokens):
     if prompt['task'] == '逐条机会判别':
-        data = judgment(prompt['content'].split('synthetic ',1)[1])
+        data = judgment(re.split(r'synthetic\s+', prompt['content'], maxsplit=1)[1])
     else:
         data = {'clusters': [{'name':'教师作业批改与反馈','function':'文本生成','industry':'教育',
                               'records':[r['id'] for r in prompt['opportunities']]}]}
