@@ -1,7 +1,10 @@
 """Bounded lexical negation and content-intent rules; not full language understanding."""
 import re
 
-VERSION='negation-and-tutorial-v4'
+VERSION='negation-and-tutorial-v5'
+DEPENDENCY_REFERENCE=re.compile(
+    r'\s+(?:(?:issues?|PR)\s*)?#?\d+(?:[ \t]*(?:[,/&]|and)[ \t]*#?\d+)*(?:[ \t]*\(\s*#\d+\s*\))?'
+    r'(?=[ \t]*(?:\r?\n|[.!?](?=\s|$)|$|In parts\s*:))',re.I)
 NEGATIVE_PREFIX=re.compile(
     r"(?:\b(?:(?:do|does|did|would|should|could|can)\s+not|(?:don|doesn|didn|wouldn|shouldn|couldn|can)['’]t|no\s+longer|never|not|no|zero|avoid(?:s|ing)?)"
     r"(?:\s+(?:really|actually|currently|have|face|experience|any|an?|the|need|for))*\s*$|(?:不再|并不|不|无需|无须|没有必要|没必要|避免|免去|零)\s*$)",re.I)
@@ -38,7 +41,12 @@ def speculative(text,start):
 
 
 def asserted_need(text,match):
-    return not negated(text,match.start()) and not speculative(text,match.start())
+    return not negated(text,match.start()) and not speculative(text,match.start()) and not dependency_reference(text,match)
+
+
+def dependency_reference(text,match):
+    # "Needs 18." is a dependency. "Needs 20 meeting reports" is not.
+    return DEPENDENCY_REFERENCE.match(text[match.end():])
 
 
 def span(match):

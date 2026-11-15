@@ -1,5 +1,7 @@
 # 来源与内容形式（2026-11-14 核对）
 
+补充核验（2026-11-15）：本轮仅通过既有官方API进行小规模公开Issue/问答检验。GitHub可接受使用政策允许研究使用公开非个人信息，要求由此发表的研究成果开放获取；并不允许任意个人信息采集或过量自动访问。见[GitHub官方政策](https://docs.github.com/en/site-policy/acceptable-use-policies/github-acceptable-use-policies)。Stack Exchange要求遵守backoff，避免一分钟内重复语义相同请求，见[官方节流说明](https://api.stackexchange.com/docs/throttle)。本次读取API主机robots：api.github.com返回404、api.stackexchange.com返回400，均未获得可解析规则；不能写成robots明确授权。按官方API接口和限制使用，不绕过访问控制；最终发表、数据处理和共享仍须符合相关条件。
+
 赛事附件2列出了哔哩哔哩、GitHub、Product Hunt、掘金、InfoQ中国、少数派、CSDN、机器之心、量子位、36氪、IT之家、V2EX、Stack Overflow、阿里云开发者社区、Papers with Code、Semantic Scholar、Kaggle、天池、DataFountain、数睿思。附件是参考清单，不是对抓取或再分发的授权。
 
 | 来源 | 当前接入与范围 | 数据形式及证据边界 |

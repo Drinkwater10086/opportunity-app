@@ -167,3 +167,19 @@ def test_solved_product_claim_is_not_an_asserted_need():
     assert judge(text)['opportunity']==0
     assert judge(text.replace('Zero manual data entry.','We need AI to avoid manual data entry.'))['opportunity']==1
     assert judge('Our team uses an AI model API for meeting transcription. It avoids the need for manual reports.')['opportunity']==0
+
+
+@pytest.mark.parametrize('suffix',['18.','#18.','issue #18.','PR #18.','18, #20.','14, 15, 18 In parts:','18 and 19\nNext section','12 (#180)\nNext section'])
+def test_task_dependency_reference_is_not_a_demand(suffix):
+    text='Whisper AI model API for our team meeting transcription. Needs '+suffix
+    result=judge(text)
+    assert not result['opportunity']
+    cues=result['content_context']['record_dependency_need_spans']
+    assert cues
+    for s in cues:assert text[s['start']:s['end']]==s['text']
+
+
+def test_numeric_quantity_or_decimal_is_not_bare_dependency():
+    assert judge('Our team needs 20 meeting reports using a Whisper AI model API.')['opportunity']==1
+    assert judge('Our team needs 20.5 hours of meeting transcription using a Whisper AI model API.')['opportunity']==1
+    assert judge('Needs #18. Our team needs AI meeting transcription using a Whisper API.')['opportunity']==1

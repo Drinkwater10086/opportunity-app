@@ -7,6 +7,7 @@ import hashlib
 import json
 import re
 import math
+import sys
 import local_preprocessing as preprocessing
 import local_embeddings
 import evidence_scoring
@@ -25,7 +26,7 @@ from sklearn.preprocessing import normalize
 
 from analysis_engine import FUNCTIONS, INDUSTRIES, rank_clusters
 
-VERSION = 'local-rules-v8-content-role'
+VERSION = 'local-rules-v9-dependency-context'
 SEED = 42
 MAX_RECORDS = 5000
 MAX_CHARACTERS = 20_000_000
@@ -237,6 +238,12 @@ def judge(record, direction, config):
          'prefix_start':max(0,m.start()-70),'prefix_text':original[max(0,m.start()-70):m.start()]}
         for m in re.finditer(PATTERNS['need'],structured['text'],re.I)
         if context_rules.speculative(structured['text'],m.start())]
+    context['record_dependency_need_spans']=[]
+    for match in re.finditer(PATTERNS['need'],structured['text'],re.I):
+        reference=context_rules.dependency_reference(structured['text'],match)
+        if reference:
+            end=match.end()+reference.end()
+            context['record_dependency_need_spans'].append({'start':match.start(),'end':end,'text':original[match.start():end]})
     for target, source in [('evidence','need'),('need_evidence','need'),('pain','need'),
                            ('user_evidence','context'),('target_user','context'),
                            ('ai_evidence','ai'),('feasibility_evidence','feasible')]:
@@ -415,6 +422,8 @@ def analyze(batch, records, config, source_count):
     exclusions = Counter(reason for j in judgments.values() for reason in j['failed_checks'])
     signature = json.dumps({'direction': batch['direction'], 'records': records}, ensure_ascii=False, sort_keys=True)
     return {'version': VERSION, 'sklearn_version': sklearn.__version__, 'seed': SEED,
+            'snapshot_schema_version':2,'direction':batch['direction'],
+            'runtime_versions':{'python':sys.version,'numpy':np.__version__,'sklearn':sklearn.__version__},
             'input_sha256': hashlib.sha256(signature.encode()).hexdigest(), 'config': config,
             'representation': representation, 'judgments': judgments, 'clusters': clusters,
             'embedding_metadata': embedding_metadata, 'effective_distance_threshold': cluster_threshold,
