@@ -6,7 +6,7 @@ let selected='',runId='',timer=null,epoch=0;
 async function api(url,body){const r=await fetch(url,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});let d;try{d=await r.json();}catch{throw Error('服务器未返回有效响应，请检查后端是否运行');}if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:'参数无效或登录已过期，请检查输入或返回主页登录');return d;}
 function link(text,url){const a=node('a',text);a.href=url;a.className='link';return a;}
 const factorNames={quality:'正文质量',relevant:'方向相关性',real_need:'需求线索',context:'使用场景',ai_core:'AI关联性',feasible:'实现线索',classified:'功能分类'};
-const reasonNames={quality:'正文过短',relevant:'方向词未命中',real_need:'无肯定需求线索',context:'无场景词',ai_core:'AI与需求关系不足或被否定',feasible:'无技术实现线索',classified:'功能标签未命中',exclude:'推广排除词',tutorial_content:'教程内容，未发现实际困难',below_threshold:'评分低于阈值',technical_context_only:'仅为技术背景'};
+const reasonNames={quality:'正文过短',relevant:'方向词未命中',real_need:'无肯定需求线索',context:'无场景词',ai_core:'AI与需求关系不足或被否定',feasible:'无技术实现线索',classified:'功能标签未命中',exclude:'推广排除词',tutorial_content:'教程内容，未发现实际困难',job_posting:'结构化招聘广告，未发现应用处理诉求',below_threshold:'评分低于阈值',technical_context_only:'仅为技术背景'};
 function disclosure(title){const d=node('details');d.append(node('summary',title));return d;}
 function recordEvidence(record,j){
  const body=node('div');if(!j){body.append(node('p','此记录没有保存的判别结果，请核查实验完整性。'));return body;}
@@ -18,6 +18,7 @@ function recordEvidence(record,j){
  }s.append(node('p',`${j.score_detail.cap_reason??'旧方法无附加限分'}；最终分数 ${j.confidence}。${j.score_detail.note}`));body.append(s);}
  if(j.selected_context)body.append(node('p',`判别上下文[${j.selected_context.start},${j.selected_context.end})：${j.selected_context.text}`));
  if(j.content_context){const c=j.content_context;for(const e of c.denied_need_spans??[])body.append(node('p',`否定需求词[${e.start},${e.end})：${e.text}`));for(const e of c.record_tentative_need_spans??c.tentative_need_spans??[])body.append(node('p',`推测性需求词[${e.start},${e.end})：${e.text}（未作为肯定需求）；前文：${e.prefix_text??'见所选上下文'}`));if(c.tutorial?.cue)body.append(node('p','教程线索：'+c.tutorial.cue.text));}
+ if(j.content_context?.job_posting){const g=j.content_context.job_posting;const d=disclosure(`招聘内容检查：${g.exclude?'作为岗位广告排除':'未因招聘内容排除'}`);for(const [key,e] of Object.entries(g.signals))if(e)d.append(node('p',`${key} · 原文[${e.start},${e.end})：${e.text}`));if(g.title_cue)d.append(node('p','标题线索：'+g.title_cue.text));if(g.user_task)d.append(node('p','用户处理诉求：'+g.user_task.text));d.append(node('p',g.note));body.append(d);}
  const traces=disclosure('全部判别证据与处理说明');for(const [key,span] of Object.entries(j.evidence_spans??{}))if(span)traces.append(node('p',`${key} · 原文[${span.start},${span.end})：${span.text}`));
  if(j.data_quality)traces.append(node('p',`分析字符 ${j.data_quality.analysis_characters} · 屏蔽代码/引用 ${j.data_quality.excluded_characters} 字符；${j.data_quality.note}`));body.append(traces);
  const original=disclosure('完整清洗文本');let loaded=false;original.ontoggle=()=>{if(original.open&&!loaded){loaded=true;original.append(node('pre',record.content));}};body.append(original);return body;

@@ -93,3 +93,35 @@ def test_mixed_chinese_ai_boundaries_do_not_match_english_substrings():
         assert re.search(core.PATTERNS['ai'],text,re.I)
     for text in ['email','storage','chair','staircase','whispering','neuralgia','OCRing','my_AI_module']:
         assert not re.search(core.PATTERNS['ai'],text,re.I)
+
+
+def test_structured_hiring_ads_are_not_application_demand():
+    texts=[
+        'Our team needs AI meeting transcription using a Whisper model API. Job ID 123. Apply now.',
+        'Our team needs AI meeting transcription using a Whisper model API. We are hiring. Salary negotiable.',
+        '团队需要AI会议转写，现有Whisper模型API可用。招聘岗位：开发工程师；投递简历至公司平台。',
+    ]
+    for text in texts:
+        result=judge(text)
+        assert result['opportunity']==0
+        assert 'job_posting' in result['hard_gate_failures']
+        status=result['content_context']['job_posting']
+        assert status['exclude']
+        for s in status['signals'].values():
+            if s:assert text[s['start']:s['end']]==s['text']
+
+
+def test_recruiting_software_requests_are_not_blanket_excluded():
+    text='Our team needs AI to extract job posting data for meetings using a model API. Job ID 123. Apply now.'
+    assert judge(text)['opportunity']==1
+    assert judge('Our team cannot classify job applications using a Whisper AI model API for meeting reports. Job ID 123. Apply now.')['opportunity']==1
+    assert judge('Our team needs AI meeting transcription for recruiting using a Whisper model API.')['opportunity']==1
+
+
+def test_hiring_signals_outside_selected_window_remain_traceable():
+    text='Our team needs AI meeting transcription using a Whisper model API.\n\n'+('Background information. '*80)+'Job ID 123. Apply now.'
+    result=judge(text)
+    assert result['opportunity']==0
+    cue=result['content_context']['job_posting']['signals']['position']
+    assert cue['start']>result['selected_context']['end']
+    assert text[cue['start']:cue['end']]==cue['text']
