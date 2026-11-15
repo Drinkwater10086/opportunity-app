@@ -16,11 +16,22 @@ function report(r,base){const box=$('result');box.replaceChildren(node('h2','分
  box.append(node('p',r.evaluation.note));for(const s of r.evaluation.sensitivity)box.append(node('p',`距离阈值 ${s.distance_threshold.toFixed(2)}：${s.cluster_count} 簇，与主结果 ARI ${s.ari===null?'样本不足':s.ari.toFixed(4)}（参数敏感性）`));
  const experimental=node('details');experimental.append(node('summary','规则阈值与消融实验'));for(const s of r.evaluation.threshold_sensitivity)experimental.append(node('p',`阈值 ${s.threshold}：${s.candidate_count} 条候选`));for(const [k,v] of Object.entries(r.evaluation.ablation))experimental.append(node('p',`移除 ${names[k]??k} 硬门槛后：${v} 条（保留原分数及阈值）`));box.append(experimental);
  box.append(node('h2','机会主题与样本内排序'),node('p',r.score_formula));if(!r.clusters.length)box.append(node('p','没有通过全部规则的候选。请检查原文与筛选原因，不应为了得到主题而随意放宽条件。'));
- for(const c of r.clusters){const section=node('article');section.append(node('h3',`${c.priority}. ${c.name}`),node('p',`${c.score.toFixed(2)}分 · ${c.count}条 · 近重复组数 ${c.unique_evidence_count??c.count}（调整分 ${c.duplicate_adjusted_score??c.score}，仅供对照） · ${c.function} / ${c.industry} · ${c.sources.join('、')}`),node('p',`成员：${c.records.join('、')}；代表记录 ${c.representative_id}；主题名由原文关键词与功能标签按固定句式组成，须核验。`),link('导出立项研究提纲',base+`/proposal/${c.id}.md`));box.append(section);}
+ for(const c of r.clusters){const section=node('article');section.append(node('h3',`${c.priority}. ${c.name}`),node('p',`${c.score.toFixed(2)}分 · ${c.count}条 · 近重复组数 ${c.unique_evidence_count??c.count}（调整分 ${c.duplicate_adjusted_score??c.score}，仅供对照） · ${c.function} / ${c.industry} · ${c.sources.join('、')}`),node('p',`成员：${c.records.join('、')}；代表记录 ${c.representative_id}；主题名由原文关键词与功能标签按固定句式组成，须核验。`),link('导出立项策划 Markdown',base+`/proposal/${c.id}.md`));planEditor(section,base,c.id);box.append(section);}
  const details=node('details');details.append(node('summary',`全部 ${r.record_count} 条判别与原文证据`));for(const record of r.input_records){const j=r.judgments[record.id],article=node('article');article.append(node('h3',`${record.id} · ${record.title}`),node('p',`${j.opportunity?'候选':'未通过'} · 规则分数 ${j.confidence} · ${j.reason}`));try{const u=new URL(record.url);if(['https:','http:'].includes(u.protocol))article.append(link('查看公开来源',u.href));}catch{}
  if(j.selected_context)article.append(node('p',`选中上下文[${j.selected_context.start},${j.selected_context.end})：${j.selected_context.text}`));if(j.data_quality)article.append(node('p',`分析字符 ${j.data_quality.analysis_characters} · 屏蔽代码/引用字符 ${j.data_quality.excluded_characters}；${j.data_quality.note}`));
  for(const [key,span] of Object.entries(j.evidence_spans))if(span)article.append(node('p',`${key} · 原文字符[${span.start},${span.end})：${span.text}`));const original=node('details');original.append(node('summary','完整清洗文本'),node('pre',record.content));article.append(original);details.append(article);}box.append(details);
 }
+function planEditor(container,base,clusterId){
+ const details=node('details');details.append(node('summary','编辑立项策划（计划与原文分开保存）'));container.append(details);let loaded=false;
+ details.ontoggle=async()=>{if(!details.open||loaded)return;loaded=true;const status=node('p','读取策划修订…');details.append(status);try{
+  const saved=await api(base+'/plans/'+encodeURIComponent(clusterId)),form=node('form'),fields={};
+  const labels={target_users:'目标用户',pain_points:'核心痛点',core_features:'核心功能',technical_route:'技术路线',schedule:'实施周期',subtasks:'子任务分解',resources:'资源与成本',validation:'验证与验收标准'};
+  for(const [key,title] of Object.entries(labels)){const label=node('label',title),input=node('textarea');input.value=saved.plan[key]??'';input.maxLength=['target_users','schedule','resources'].includes(key)?4000:8000;label.append(input);fields[key]=input;form.append(label);}
+  const button=node('button','保存策划修订');button.type='submit';form.append(button);details.append(form);status.textContent='填写的是待验证计划，保存时新增修订记录；不会修改分析证据。';
+  form.onsubmit=async e=>{e.preventDefault();button.disabled=true;try{const result=await api(base+'/plans/'+encodeURIComponent(clusterId),Object.fromEntries(Object.entries(fields).map(([key,input])=>[key,input.value])));status.textContent=`已保存 ${result.id}；上方导出链接将包含本次修订。`;}catch(error){status.textContent=error.message;}finally{button.disabled=false;}};
+ }catch(error){status.textContent=error.message;loaded=false;}};
+}
+
 function comparisonControl(rows,base,currentId){
  const options=rows.filter(r=>r.id!==currentId&&r.status==='complete');if(!options.length)return;
  const panel=node('section'),select=node('select'),button=node('button','比较已保存实验'),output=node('p');

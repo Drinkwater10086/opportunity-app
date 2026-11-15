@@ -109,6 +109,16 @@ def test_routes_no_key_isolation_exports_and_legacy_untouched(tmp_path):
             rows = list(csv.reader(io.StringIO(response.content.decode('utf-8-sig'))))
             assert len(rows) > 1 and rows[1][0] == 'B1'
         assert client.get(base+'/proposal/C1.md').status_code == 200
+        plan_path=base+'/plans/C1'
+        assert client.get(plan_path).json()['id'] is None
+        saved=client.post(plan_path,json={'schedule':'团队估计：两周，尚未验证','resources':'仅本机测试'}).json()
+        assert saved['saved']
+        assert client.get(plan_path).json()['id']==saved['id']
+        assert '团队估计：两周' in client.get(base+'/proposal/C1.md').text
+        next_plan=client.post(plan_path,json={'schedule':'修订：三周，待核实'}).json()
+        assert next_plan['id']!=saved['id']
+        assert client.post(base+'/plans/unknown',json={}).status_code==404
+        assert client.post(plan_path,json={'unexpected':'no'}).status_code==422
         assert client.get(base+'/proposal/missing.md').status_code == 404
         assert client.get(base+'/evidence.json').json()['result']['input_sha256']
         assert client.get('/local').status_code == 200
@@ -124,6 +134,7 @@ def test_routes_no_key_isolation_exports_and_legacy_untouched(tmp_path):
             assert db.execute('SELECT COUNT(*) FROM model_calls').fetchone()[0] == 0
             assert db.execute("SELECT config FROM analyses WHERE batch_id='B1'").fetchone()[0] == '{}'
             assert db.execute('SELECT COUNT(*) FROM judgments').fetchone()[0] == 0
+            assert db.execute('SELECT COUNT(*) FROM local_plans').fetchone()[0] == 2
         second = client.post('/api/batches/B1/local-runs',json={}).json()['id']
         assert second != rid
         assert len(client.get('/api/batches/B1/local-runs').json()) == 2

@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 import local_analysis
 import local_preprocessing
 import local_comparison
+import local_planning
 
 RUN_LOCK = threading.Lock()
 
@@ -39,6 +40,9 @@ def init(db):
         created_at TEXT NOT NULL, status TEXT NOT NULL, config TEXT NOT NULL,
         result TEXT NOT NULL DEFAULT '{}', error TEXT NOT NULL DEFAULT '')''')
     db.execute("UPDATE local_runs SET status='failed',error='服务重启导致中断，请创建新的本地实验' WHERE status IN ('queued','running')")
+    db.execute('''CREATE TABLE IF NOT EXISTS local_plans (
+        id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES local_runs(id),cluster_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,author TEXT NOT NULL,plan TEXT NOT NULL)''')
 
 
 def install(app, connect, get_records, require_usable_batch, root, sources, csv_download):
@@ -66,7 +70,7 @@ def install(app, connect, get_records, require_usable_batch, root, sources, csv_
             result = local_analysis.analyze(batch, records, config, source_count)
             result['source_code_sha256'] = hashlib.sha256(Path(local_analysis.__file__).read_bytes()).hexdigest()
             result['source_hashes'] = {module.__name__: hashlib.sha256(Path(module.__file__).read_bytes()).hexdigest()
-                                       for module in (local_analysis, local_preprocessing, local_comparison)}
+                                       for module in (local_analysis, local_preprocessing, local_comparison, local_planning)}
             # Retain the exact inputs used by this run, not a future mutable database view.
             result['input_records'] = records
             with connect() as db:
@@ -160,17 +164,36 @@ def install(app, connect, get_records, require_usable_batch, root, sources, csv_
         cluster = next((c for c in result['clusters'] if c['id'] == cluster_id), None)
         if cluster is None:
             raise HTTPException(404, '主题不存在')
-        rows = {r['id']: r for r in result['input_records']}
-        text = [f"# {cluster['name']}", '', f'批次：{batch_id}；实验：{run_id}',
-                '', '程序整理的立项研究提纲，非经过市场验证的策划案。',
-                '', '## 目标用户与痛点原文']
-        for rid in cluster['records']:
-            j = result['judgments'][rid]
-            text += [f"- {rid}：{j['user_evidence']}", f"  需求：{j['need_evidence']}"]
-        text += ['', '## 核心功能与技术路线', f"候选功能类别：{cluster['function']}。具体需求边界、技术选型及可行性须独立验证。",
-                 '', '## 实施周期与子任务', '周期未估计：先核对需求与原文，再设计最小原型、评估质量与成本，最后制定实施排期。',
-                 '', '## 价值评分', f"样本内价值分 {cluster['score']}，优先级 {cluster['priority']}。", result['score_formula'],
-                 '', '## 依据来源']
-        for rid in cluster['records']:
-            text.append(f"- {rid} · {rows[rid]['source']} · {rows[rid]['url']}")
-        return Response('\n'.join(text), media_type='text/markdown', headers={'Content-Disposition':'attachment; filename="proposal.md"'})
+        saved=read_plan(run_id,cluster_id)
+        text=local_planning.render(batch_id,run_id,cluster,result,saved['plan'],saved.get('id'))
+        return Response(text, media_type='text/markdown', headers={'Content-Disposition':'attachment; filename="proposal.md"'})
+
+    def read_plan(run_id,cluster_id):
+        with connect() as db:
+            row=db.execute('SELECT * FROM local_plans WHERE run_id=? AND cluster_id=? ORDER BY created_at DESC,id DESC LIMIT 1',
+                           (run_id,cluster_id)).fetchone()
+        if row:
+            item=dict(row);item['plan']=json.loads(item['plan']);return item
+        return {'plan':local_planning.Plan().model_dump(),'id':None}
+
+    def require_cluster(batch_id,run_id,cluster_id):
+        result=finished(batch_id,run_id)['result']
+        if not any(c['id']==cluster_id for c in result['clusters']):
+            raise HTTPException(404,'主题不存在')
+
+    @app.get('/api/batches/{batch_id}/local-runs/{run_id}/plans/{cluster_id}')
+    def plan(batch_id: str,run_id: str,cluster_id: str):
+        require_cluster(batch_id,run_id,cluster_id)
+        return read_plan(run_id,cluster_id)
+
+    @app.post('/api/batches/{batch_id}/local-runs/{run_id}/plans/{cluster_id}',status_code=201)
+    def save_plan(batch_id: str,run_id: str,cluster_id: str,body:local_planning.Plan,request:Request):
+        user=getattr(request.state,'user',None)
+        if not user or user.get('role') not in ('admin','researcher','decision'):
+            raise HTTPException(403,'当前角色不可编辑策划案')
+        require_cluster(batch_id,run_id,cluster_id)
+        plan_id='P'+uuid.uuid4().hex[:16].upper()
+        with connect() as db:
+            db.execute('INSERT INTO local_plans VALUES (?,?,?,?,?,?)',
+                       (plan_id,run_id,cluster_id,datetime.now(timezone.utc).isoformat(),user['username'],json.dumps(body.model_dump(),ensure_ascii=False)))
+        return {'id':plan_id,'saved':True,'note':'保存为新的策划修订，未改变分析结果或原文证据'}
