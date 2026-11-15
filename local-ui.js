@@ -52,15 +52,18 @@ function evaluationDetails(result){
   const e=result.evaluation[key];if(!e)continue;const view=disclosure(title);view.append(node('p',`${e.cluster_count}簇 · 单记录簇 ${e.singleton_count} · 轮廓系数 ${e.silhouette===null?'无法计算':e.silhouette.toFixed(4)} · 最大簇 ${(100*e.largest_cluster_fraction).toFixed(1)}%`),node('p',e.reason));for(const w of e.warnings??[])view.append(node('p',w));root.append(view);
  }
  if(result.evaluation.semantic_threshold_grid){const grid=disclosure('E5固定阈值网格（未自动择优）');for(const e of result.evaluation.semantic_threshold_grid)grid.append(node('p',`距离${e.distance_threshold}：${e.cluster_count}簇，单例${e.singleton_count}，最大簇${(100*e.largest_cluster_fraction).toFixed(1)}%`));root.append(grid);}
+ if(result.evaluation.value_diagnostics){const v=result.evaluation.value_diagnostics,d=disclosure('价值权重敏感性（不改变正式排名）');d.append(node('p',v.note));for(const row of v.weight_grid)d.append(node('p',`来源覆盖权重 ${(100*row.coverage_weight).toFixed(1)}%，记录规模 ${(100*row.scale_weight).toFixed(1)}%；最高同分主题：${row.top_ids.join('、')}`));root.append(d);}
  const sensitivity=disclosure('规则阈值、聚类敏感性与消融');for(const e of result.evaluation.threshold_sensitivity)sensitivity.append(node('p',`机会阈值${e.threshold}：${e.candidate_count}条候选`));for(const e of result.evaluation.sensitivity)sensitivity.append(node('p',`聚类距离${e.distance_threshold.toFixed(2)}：${e.cluster_count}簇，共同输入ARI ${e.ari===null?'样本不足':e.ari.toFixed(4)}`));for(const [key,count] of Object.entries(result.evaluation.ablation))sensitivity.append(node('p',`移除${reasonNames[key]??key}门槛：${count}条（保留原分数及阈值）`));root.append(sensitivity,node('p',result.evaluation.note),node('p',result.score_formula));return root;
 }
 function report(result,base){
  const box=$('result');box.replaceChildren(node('h2','分析结论'),node('p',result.conclusion));const cards=node('div');cards.className='cards';for(const [title,value] of [['采集记录',result.record_count],['候选机会',result.candidate_count],['机会主题',result.clusters.length]]){const c=node('div');c.className='stat';c.append(node('strong',String(value)),node('span',title));cards.append(c);}box.append(cards);
  box.append(node('p','机会证据分表示规则支持强度；主题价值分用于本批次相对排序，两者均不是准确率或市场规模。'));
+ if(result.evaluation.value_diagnostics?.all_scores_equal)box.append(node('p','所有主题的正式价值分相同，当前两个评分维度无法区分优先价值；请结合原文证据决策，不将展示先后当作优劣。'));
  const downloads=node('div');downloads.className='toolbar';for(let n=1;n<=4;n++)downloads.append(link(`result${n}.csv`,base+`/result${n}.csv`));downloads.append(link('证据与实验参数',base+'/evidence.json'));box.append(downloads);
  const inspector=evidenceInspector(result);box.append(node('h2','机会主题与优先级'));
  if(!result.clusters.length)box.append(node('p','当前没有记录同时满足方向、需求、AI与可落地证据及评分阈值。可在下方查询记录查看具体原因；空结果不会生成虚构机会。'));
  for(const c of result.clusters){const section=node('article');section.dataset.themeId=c.id;section.append(node('h3',`${c.priority}. ${c.name}`),node('p',`样本内价值分 ${c.score.toFixed(2)} · ${c.count}条记录 · ${c.function} / ${c.industry} · ${c.sources.join('、')}`));
+  if((c.same_score_count??1)>1)section.append(node('p',`与另外${c.same_score_count-1}个主题同分；当前顺序按簇编号固定展示，不表示价值高低差异。`));
   section.append(node('p','查看构成这个主题的原始记录：'));const members=node('div');members.className='toolbar';for(const id of c.records){const button=node('button',id);button.setAttribute('aria-label',`查看记录 ${id}`);button.onclick=()=>inspector.focus(id);members.append(button);}section.append(members,link('导出立项策划 Markdown',base+`/proposal/${c.id}.md`));
   const detail=disclosure('主题命名与评分依据');detail.append(node('p',`代表记录 ${c.representative_id}；${c.name_method??'历史主题命名方法见实验参数'}。`),node('p',`近重复组数 ${c.unique_evidence_count??c.count}；调整分 ${c.duplicate_adjusted_score??c.score}仅作对照；正式分按记录规模计算。`));section.append(detail);planEditor(section,base,c.id);box.append(section);
  }

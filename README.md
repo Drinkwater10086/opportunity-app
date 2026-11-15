@@ -24,6 +24,7 @@ python -m uvicorn app:app --host 127.0.0.1 --port 8000
 - [赛事要求与当前差距](CONTEST_CHECKLIST.md)
 - [内容边界与真实批次实验](CONTEXT_RULES.md)
 - [实验离线重放与新批次检验](REPRODUCIBILITY.md)
+- [价值同分与权重敏感性](VALUE_DIAGNOSTICS.md)
 
 新增V2EX最新公开主题、arXiv当日AI摘要来源。后者仅作技术背景，不单独当作需求机会。订阅源不支持历史全站搜索；图片、PDF及音视频尚未自动转换。
 

@@ -12,9 +12,11 @@ import local_preprocessing
 import local_embeddings
 import evidence_scoring
 import context_rules
+import local_value
+import analysis_engine
 from local_routes import LocalConfig
 
-MODULES=(local_analysis,local_preprocessing,local_embeddings,evidence_scoring,context_rules)
+MODULES=(local_analysis,local_preprocessing,local_embeddings,evidence_scoring,context_rules,local_value,analysis_engine)
 OUTPUT_KEYS=('judgments','clusters','evaluation','representation','input_sha256',
              'candidate_count','record_count','duplicate_diagnostics')
 

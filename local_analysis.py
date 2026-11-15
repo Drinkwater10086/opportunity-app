@@ -12,6 +12,7 @@ import local_preprocessing as preprocessing
 import local_embeddings
 import evidence_scoring
 import context_rules
+import local_value
 from bisect import bisect_left
 from collections import Counter
 
@@ -26,7 +27,7 @@ from sklearn.preprocessing import normalize
 
 from analysis_engine import FUNCTIONS, INDUSTRIES, rank_clusters
 
-VERSION = 'local-rules-v9-dependency-context'
+VERSION = 'local-rules-v10-value-diagnostics'
 SEED = 42
 MAX_RECORDS = 5000
 MAX_CHARACTERS = 20_000_000
@@ -418,6 +419,9 @@ def analyze(batch, records, config, source_count):
         for index,cluster in enumerate(clusters,1):cluster['priority']=index
 
     members = [rid for c in clusters for rid in c['records']]
+    evaluation['value_diagnostics']=local_value.diagnostics(clusters,source_count,(config['coverage_weight'],config['scale_weight']))
+    tie_sizes={cid:len(group['cluster_ids']) for group in evaluation['value_diagnostics']['tie_groups'] for cid in group['cluster_ids']}
+    for c in clusters:c['same_score_count']=tie_sizes.get(c['id'],1)
     evaluation['structure_valid'] = len(members) == len(set(members)) and set(members) == {r['id'] for r in positives}
     exclusions = Counter(reason for j in judgments.values() for reason in j['failed_checks'])
     signature = json.dumps({'direction': batch['direction'], 'records': records}, ensure_ascii=False, sort_keys=True)
