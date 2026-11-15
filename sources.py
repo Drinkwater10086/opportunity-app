@@ -86,6 +86,21 @@ def queries(value):
     return terms
 
 
+LOCAL_QUERY_MATCH_VERSION='ascii-word-boundary-and-tokens-v1'
+
+
+def matches_local_query(text,query):
+    """Feed-local AND tokens; API-specific search syntax is not interpreted."""
+    content=text.casefold()
+    words=query.casefold().split()
+    if not words:return False
+    for word in words:
+        pattern=re.escape(word)
+        if word.isascii():pattern=r'(?<![a-z0-9_])'+pattern+r'(?![a-z0-9_])'
+        if not re.search(pattern,content):return False
+    return True
+
+
 def fetch(source, query, limit, days, window_end=None):
     """Bounded pagination per query, preserving page provenance and partial data."""
     source_policy.require_allowed([source])

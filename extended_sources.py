@@ -108,7 +108,7 @@ def fetch(key, query, limit, days, window_end):
         title=sources.redact(content_formats.text(item['title'],'html'))
         raw=sources.redact(content_formats.text(item.get('body') or '',item['body_format']))
         combined=title+'\n'+raw
-        matched=[term for term in search if all(token.casefold() in combined.casefold() for token in term.split())]
+        matched=[term for term in search if sources.matches_local_query(combined,term)]
         if not matched:continue
         try:
             published=parsed_date(item['published'])
@@ -132,12 +132,12 @@ def fetch(key, query, limit, days, window_end):
                                       'transport_format':transport,'content_format':item['body_format'],
                                       'content_kind':'abstract' if key=='arxiv' else 'discussion',
                                       'evidence_role':'technical_context' if key=='arxiv' else 'demand_signal',
-                                      'date_basis':item['date_basis'],'matched_queries':matched},
+                                      'date_basis':item['date_basis'],'matched_queries':matched,'query_match_method':sources.LOCAL_QUERY_MATCH_VERSION},
                         'reliability':{'origin':cfg['name'],'note':'论文摘要只用于技术背景，不单独作为需求机会证据' if key=='arxiv' else '社区自述未经独立核实',
                                        'retained_body_sha256':hashlib.sha256(raw.encode()).hexdigest()}})
     return records, {'complete':invalid==0,'error':'存在日期或链接异常，已跳过并标记部分完成' if invalid else '',
                      'endpoint':cfg['endpoint'],'retrieved_at':datetime.now(timezone.utc).isoformat(),
-                     'scope':cfg['scope'],'coverage_limited':True,'scanned_count':len(items),
+                     'scope':cfg['scope'],'coverage_limited':True,'scanned_count':len(items),'query_match_method':sources.LOCAL_QUERY_MATCH_VERSION,
                      'returned_count':len(records),'invalid_count':invalid,'outside_window_count':outside,
                      'window_start':(window_end-timedelta(days=days)).isoformat(),'window_end':window_end.isoformat(),
                      'robots':robots,'terms_url':cfg['terms'],'policy_reviewed_on':'2026-11-14',

@@ -101,7 +101,7 @@ def fetch_forum(source, query, limit, days, window_end=None):
                     skipped += 1
                     continue
                 content = (title+' '+body).casefold()
-                matches = [t for t in terms if all(w in content for w in t.casefold().split())]
+                matches = [t for t in terms if sources.matches_local_query(content,t)]
                 if not matches:
                     continue
                 reads = p.get('reads')
@@ -116,7 +116,7 @@ def fetch_forum(source, query, limit, days, window_end=None):
                     provenance={'item_type': 'topic' if p['post_number']==1 else 'reply',
                                 'post_id': p['id'], 'topic_id': p['topic_id'], 'post_number': p['post_number'],
                                 'body_available': True, 'body_method': 'API cooked正文转文本，未使用搜索摘要',
-                                'matched_queries': matches, 'retrieval_endpoint': endpoint},
+                                'matched_queries': matches, 'query_match_method':sources.LOCAL_QUERY_MATCH_VERSION, 'retrieval_endpoint': endpoint},
                     reliability={'origin': '产品官方社区的用户投稿', 'transport': 'HTTPS直接读取原站公开接口',
                                  'terms_url': base+'/tos', 'terms_reviewed_on': source_policy.REVIEWED_ON,
                                  'content_verified': False, 'note': '原站可追溯；用户陈述未经独立证实，回复可能依赖上下文',
@@ -162,7 +162,7 @@ def fetch_forum(source, query, limit, days, window_end=None):
                 row['provenance'].update(retrieval_endpoint=detail_url, list_endpoint=endpoint,
                                          body_method='单条帖子API cooked正文转文本；身份核对通过，未使用列表摘要')
                 content = (row['title']+' '+body).casefold()
-                eligible = [t for t in eligible if all(w in content for w in t.casefold().split())]
+                eligible = [t for t in eligible if sources.matches_local_query(content,t)]
                 if not eligible:
                     continue
             except (requests.RequestException, ValueError, KeyError, TypeError, AttributeError) as exc:
@@ -183,4 +183,5 @@ def fetch_forum(source, query, limit, days, window_end=None):
                   'ranking_method': '扫描样本内按已知阅读计数降序；未知热度排后；同分按回复数、发布时间、帖子编号降序。不代表全站热门。',
                   'matched_counts': counts, 'stop_reason': stop_reason, 'coverage_limited': True,
                   'robots_url': base+'/robots.txt',
+                  'query_match_method':sources.LOCAL_QUERY_MATCH_VERSION,
                   'scope': f'近期公开帖子最多扫描{MAX_PAGES}页；本次扫描{scanned}条，按关键词各词同时匹配并按样本阅读计数选取；不是全站历史搜索或全站热门排名，未命中不代表没有需求'}
