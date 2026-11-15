@@ -82,6 +82,7 @@ def install(app, connect, get_records, require_usable_batch, root, sources, csv_
                                        for module in (local_analysis, local_preprocessing, local_comparison, local_planning, local_embeddings, evidence_scoring, context_rules, local_value, analysis_engine)}
             # Retain the exact inputs used by this run, not a future mutable database view.
             result['input_records'] = records
+            result['proposal_drafts']=local_planning.initial_drafts(result)
             with connect() as db:
                 db.execute("UPDATE local_runs SET status='complete',result=? WHERE id=?",
                            (json.dumps(result, ensure_ascii=False, allow_nan=False), run_id))
@@ -175,27 +176,32 @@ def install(app, connect, get_records, require_usable_batch, root, sources, csv_
         cluster = next((c for c in result['clusters'] if c['id'] == cluster_id), None)
         if cluster is None:
             raise HTTPException(404, '主题不存在')
-        saved=read_plan(run_id,cluster_id)
-        text=local_planning.render(batch_id,run_id,cluster,result,saved['plan'],saved.get('id'))
+        saved=read_plan(run_id,cluster_id,result)
+        text=local_planning.render(batch_id,run_id,cluster,result,saved['plan'],saved.get('id'),saved.get('origin'),saved.get('generator_version'))
         return Response(text, media_type='text/markdown', headers={'Content-Disposition':'attachment; filename="proposal.md"'})
 
-    def read_plan(run_id,cluster_id):
+    def read_plan(run_id,cluster_id,result):
         with connect() as db:
             row=db.execute('SELECT * FROM local_plans WHERE run_id=? AND cluster_id=? ORDER BY created_at DESC,id DESC LIMIT 1',
                            (run_id,cluster_id)).fetchone()
         if row:
-            item=dict(row);item['plan']=json.loads(item['plan']);return item
-        return {'plan':local_planning.Plan().model_dump(),'id':None}
+            item=dict(row);item['plan']=json.loads(item['plan']);item['origin']='saved_revision'
+            item['generator_version']=result.get('proposal_drafts',{}).get(cluster_id,{}).get('generator_version')
+            return item
+        draft=result.get('proposal_drafts',{}).get(cluster_id)
+        if draft:return {**draft,'id':None}
+        return {'plan':local_planning.Plan().model_dump(),'id':None,'origin':'legacy_blank'}
 
     def require_cluster(batch_id,run_id,cluster_id):
         result=finished(batch_id,run_id)['result']
         if not any(c['id']==cluster_id for c in result['clusters']):
             raise HTTPException(404,'主题不存在')
+        return result
 
     @app.get('/api/batches/{batch_id}/local-runs/{run_id}/plans/{cluster_id}')
     def plan(batch_id: str,run_id: str,cluster_id: str):
-        require_cluster(batch_id,run_id,cluster_id)
-        return read_plan(run_id,cluster_id)
+        result=require_cluster(batch_id,run_id,cluster_id)
+        return read_plan(run_id,cluster_id,result)
 
     @app.post('/api/batches/{batch_id}/local-runs/{run_id}/plans/{cluster_id}',status_code=201)
     def save_plan(batch_id: str,run_id: str,cluster_id: str,body:local_planning.Plan,request:Request):

@@ -1,4 +1,4 @@
-from local_planning import Plan,render,LABELS
+from local_planning import Plan,render,LABELS,initial_drafts
 import pytest
 
 
@@ -14,3 +14,20 @@ def test_planning_contains_required_sections_without_fabricating_evidence():
     assert '待团队补充' in text and '团队估计：两周，待验证' in text
     assert 'hash' in text and 'P1' in text
     with pytest.raises(ValueError):Plan(schedule='x'*4001)
+
+
+def test_initial_draft_is_complete_explicitly_hypothetical_and_deterministic():
+    from copy import deepcopy
+    cluster={'id':'C1','name':'邮件自动化候选需求','function':'自动化流程','records':['S1']}
+    result={'clusters':[cluster],'judgments':{'S1':{
+        'user_evidence':'Our team.','need_evidence':'We need email extraction.','feasibility_evidence':'An API.'}}}
+    original=deepcopy(result)
+    drafts=initial_drafts(result)
+    assert result==original and drafts==initial_drafts(result)
+    draft=drafts['C1'];plan=Plan.model_validate(draft['plan'])
+    assert all(plan.model_dump().values())
+    assert draft['origin']=='program_initial_draft'
+    assert 'S1原文线索' in plan.target_users and 'We need email extraction.' in plan.pain_points
+    assert '假设' in plan.schedule and '承诺' in plan.schedule
+    assert '尚未实测' in plan.resources and '尚未宣称通过' in plan.validation
+    assert 'S1' in draft['sample_ids']

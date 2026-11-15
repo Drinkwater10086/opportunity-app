@@ -87,7 +87,8 @@ function planEditor(container,base,clusterId){
   const saved=await api(base+'/plans/'+encodeURIComponent(clusterId)),form=node('form'),fields={};
   const labels={target_users:'目标用户',pain_points:'核心痛点',core_features:'核心功能',technical_route:'技术路线',schedule:'实施周期',subtasks:'子任务分解',resources:'资源与成本',validation:'验证与验收标准'};
   for(const [key,title] of Object.entries(labels)){const label=node('label',title),input=node('textarea');input.value=saved.plan[key]??'';input.maxLength=['target_users','schedule','resources'].includes(key)?4000:8000;label.append(input);fields[key]=input;form.append(label);}
-  const button=node('button','保存策划修订');button.type='submit';form.append(button);details.append(form);status.textContent='填写的是待验证计划，保存时新增修订记录；不会修改分析证据。';
+  const button=node('button','保存策划修订');button.type='submit';form.append(button);details.append(form);status.textContent=(saved.origin==='program_initial_draft'?'当前为程序初始草案，建议工期、分工和验收方案均待验证。':saved.origin==='legacy_blank'?'此历史实验未保存程序初稿，可填写计划或新建本地实验。':'当前为已保存修订。')+'保存时新增修订记录，不改变原分析证据。';
+  if(saved.note)details.append(node('p',saved.note));
   form.onsubmit=async e=>{e.preventDefault();button.disabled=true;try{const result=await api(base+'/plans/'+encodeURIComponent(clusterId),Object.fromEntries(Object.entries(fields).map(([key,input])=>[key,input.value])));status.textContent=`已保存 ${result.id}；上方导出链接将包含本次修订。`;}catch(error){status.textContent=error.message;}finally{button.disabled=false;}};
  }catch(error){status.textContent=error.message;loaded=false;}};
 }

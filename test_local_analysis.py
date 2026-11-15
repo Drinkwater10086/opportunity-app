@@ -110,10 +110,18 @@ def test_routes_no_key_isolation_exports_and_legacy_untouched(tmp_path):
             assert len(rows) > 1 and rows[1][0] == 'B1'
         assert client.get(base+'/proposal/C1.md').status_code == 200
         plan_path=base+'/plans/C1'
-        assert client.get(plan_path).json()['id'] is None
+        initial_plan=client.get(plan_path).json()
+        assert initial_plan['id'] is None
+        assert initial_plan['origin']=='program_initial_draft'
+        assert initial_plan['plan']['core_features']
+        assert '示例估计' in initial_plan['plan']['schedule']
+        assert run['result']['proposal_drafts']['C1']['plan']==initial_plan['plan']
         saved=client.post(plan_path,json={'schedule':'团队估计：两周，尚未验证','resources':'仅本机测试'}).json()
         assert saved['saved']
         assert client.get(plan_path).json()['id']==saved['id']
+        assert client.get(plan_path).json()['origin']=='saved_revision'
+        assert client.get(plan_path).json()['generator_version']==initial_plan['generator_version']
+        assert client.get(base).json()['result']['proposal_drafts']==run['result']['proposal_drafts']
         assert '团队估计：两周' in client.get(base+'/proposal/C1.md').text
         next_plan=client.post(plan_path,json={'schedule':'修订：三周，待核实'}).json()
         assert next_plan['id']!=saved['id']

@@ -49,6 +49,15 @@ def test_different_saved_decision_is_detected(snapshot):
     assert 'judgments' in report['different_fields']
 
 
+def test_saved_program_drafts_replay_and_detect_changes(snapshot):
+    import local_planning
+    snapshot['result']['proposal_drafts']=local_planning.initial_drafts(snapshot['result'])
+    assert tool.replay(snapshot)['same_outputs']
+    snapshot['result']['proposal_drafts']['C1']['plan']['schedule']='changed'
+    report=tool.replay(snapshot)
+    assert report['different_fields']==['proposal_drafts']
+
+
 def test_cli_writes_only_summary_and_preserves_input(snapshot,tmp_path):
     path=tmp_path/'evidence.json';path.write_text(json.dumps(snapshot,ensure_ascii=False),encoding='utf8')
     before=path.read_bytes();out=tmp_path/'summary.json'
