@@ -25,7 +25,7 @@ from sklearn.preprocessing import normalize
 
 from analysis_engine import FUNCTIONS, INDUSTRIES, rank_clusters
 
-VERSION = 'local-rules-v7-hiring-context'
+VERSION = 'local-rules-v8-content-role'
 SEED = 42
 MAX_RECORDS = 5000
 MAX_CHARACTERS = 20_000_000
@@ -132,6 +132,7 @@ def judge_window(record, direction, config):
     hits['exclude']=match_evidence(text,context_rules.first_asserted(text,PATTERNS['exclude']))
     tutorial=context_rules.tutorial_status(text)
     job_posting=record.get('_job_posting') or context_rules.job_posting_status(record.get('title',''),text)
+    compilation=record.get('_compilation') or context_rules.compilation_status(record.get('title',''),text)
     paired = nearby_evidence(text)
     if paired:
         hits['need'], hits['ai'] = paired
@@ -154,7 +155,7 @@ def judge_window(record, direction, config):
     score_detail['raw_evidence_score']=score
     score_detail['selected_method']=config.get('score_method','evidence_strength')
     if config.get('score_method','evidence_strength')=='completeness':score=score_detail['completeness']
-    excluded = bool(hits['exclude']) or supporting_only or tutorial['exclude'] or job_posting['exclude']
+    excluded = bool(hits['exclude']) or supporting_only or tutorial['exclude'] or job_posting['exclude'] or compilation['exclude']
     score_detail['raw_selected_score']=score
     if config.get('score_method','evidence_strength')=='evidence_strength':
         cap=.2 if excluded else .49 if not all(checks.values()) else 1.
@@ -164,6 +165,7 @@ def judge_window(record, direction, config):
     score_detail['final_score']=score
     opportunity = int(all(checks.values()) and not excluded and score >= config['threshold'])
     hard_failures = [key for key, passed in checks.items() if not passed] + (['exclude'] if hits['exclude'] else []) + (['tutorial_content'] if tutorial['exclude'] else []) + (['job_posting'] if job_posting['exclude'] else []) + (['technical_context_only'] if supporting_only else [])
+    if compilation['exclude']:hard_failures.append('compiled_background')
     failures=hard_failures+(['below_threshold'] if score<config['threshold'] else [])
     def quote(key):
         return hits[key]['text'] if hits[key] else ''
@@ -189,6 +191,7 @@ def judge(record, direction, config):
     # Genre cues may sit outside the selected demand window. Keep source offsets
     # in the full masked record; do not reinterpret title offsets as body offsets.
     record={**record,'_job_posting':context_rules.job_posting_status(record.get('title',''),structured['text'])}
+    record['_compilation']=context_rules.compilation_status(record.get('title',''),structured['text'])
     candidates = []
     fallback = None
     for start, end, window in preprocessing.windows(structured):
@@ -224,6 +227,7 @@ def judge(record, direction, config):
             span['text']=original[span['start']:span['end']]
     context=result['content_context']
     context['job_posting']=record['_job_posting']
+    context['compilation']=record['_compilation']
     for span in context['denied_need_spans']+context['tentative_need_spans']+[s for s in (context['tutorial']['cue'],context['tutorial']['personal_problem']) if s]:
         span['start']+=start;span['end']+=start;span['text']=original[span['start']:span['end']]
     # Selection may move to another window after removing a tentative match.

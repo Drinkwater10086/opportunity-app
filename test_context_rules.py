@@ -4,8 +4,8 @@ from local_routes import LocalConfig
 import local_analysis as core
 
 
-def judge(text):
-    return core.judge({'id':'S1','title':'test','content':text,'source':'test'},'企业办公自动化',LocalConfig().model_dump())
+def judge(text,title='test'):
+    return core.judge({'id':'S1','title':title,'content':text,'source':'test'},'企业办公自动化',LocalConfig().model_dump())
 
 
 @pytest.mark.parametrize('text',[
@@ -125,3 +125,45 @@ def test_hiring_signals_outside_selected_window_remain_traceable():
     cue=result['content_context']['job_posting']['signals']['position']
     assert cue['start']>result['selected_context']['end']
     assert text[cue['start']:cue['end']]==cue['text']
+
+
+def test_paper_compilations_are_background_regardless_of_platform():
+    text=('Title: Meeting transcription study. Authors: Research group. Abstract: '
+          'Our team needs AI meeting transcription using a Whisper model API. ')*2
+    result=judge(text,'New research listings')
+    assert result['opportunity']==0
+    assert 'compiled_background' in result['hard_gate_failures']
+    role=result['content_context']['compilation']
+    assert role['role']=='academic_compilation'
+    for value in role['signals'].values():
+        if value['first']:
+            s=value['first'];assert text[s['start']:s['end']]==s['text']
+    # A single citation is insufficient to classify a whole record as a digest.
+    assert not core.context_rules.compilation_status('test',text[:len(text)//2])['exclude']
+    # Some feeds use the heading itself as title, with no literal "Title:".
+    variant=text.replace('Title: Meeting transcription study.','### Meeting transcription study. Subjects: Computer science.')
+    assert core.context_rules.compilation_status('test',variant)['exclude']
+
+
+def test_user_question_can_include_multiple_papers_as_background():
+    text=('Our team needs AI to extract meeting transcripts using a Whisper model API. '
+          + 'Title: Study. Authors: Research group. Abstract: research background. '*2)
+    result=judge(text,'How can we extract meeting transcripts?')
+    assert result['opportunity']==1
+    assert result['content_context']['compilation']['user_request_exception']
+
+
+def test_digest_requires_title_and_structured_content():
+    text='Our team needs AI meeting transcription using a Whisper model API. '+ ' - [A news item](source)'*6
+    assert judge(text,'[每日信息流] 2026-07-01')['opportunity']==0
+    assert judge(text,'Weekly monitor 2026-07-01')['opportunity']==0
+    assert judge(text,'Meeting transcription question')['opportunity']==1
+    status=core.context_rules.compilation_status('Daily news','one ordinary sentence')
+    assert not status['exclude']
+
+
+def test_solved_product_claim_is_not_an_asserted_need():
+    text='AI-powered invoice extraction for our team, using an OCR model API. Zero manual data entry.'
+    assert judge(text)['opportunity']==0
+    assert judge(text.replace('Zero manual data entry.','We need AI to avoid manual data entry.'))['opportunity']==1
+    assert judge('Our team uses an AI model API for meeting transcription. It avoids the need for manual reports.')['opportunity']==0
