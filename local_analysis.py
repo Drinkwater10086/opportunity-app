@@ -10,6 +10,7 @@ import math
 import local_preprocessing as preprocessing
 import local_embeddings
 import evidence_scoring
+import context_rules
 from bisect import bisect_left
 from collections import Counter
 
@@ -24,7 +25,7 @@ from sklearn.preprocessing import normalize
 
 from analysis_engine import FUNCTIONS, INDUSTRIES, rank_clusters
 
-VERSION = 'local-rules-v4-evidence-strength'
+VERSION = 'local-rules-v5-context-negation'
 SEED = 42
 MAX_RECORDS = 5000
 MAX_CHARACTERS = 20_000_000
@@ -61,13 +62,13 @@ INDUSTRY_TERMS = dict(zip(INDUSTRIES, [
     '媒体出版,新闻,publishing,journalism,news', '营销广告,marketing,advertising',
     '外贸,foreign trade,international trade', '',
 ]))
-OFFICE = '会议,邮件,审批,合同,办公,销售,人事,财务,meeting,email,approval,contract,office,knowledge base,sales,crm,human resources,invoice,payroll'
+OFFICE = '会议,邮件,审批,合同,办公,销售,人事,财务,meeting,meetings,email,emails,approval,approvals,contract,contracts,office,offices,knowledge base,knowledge bases,sales,crm,human resources,invoice,invoices,payroll'
 PATTERNS = {
     'need': r'有没有|求推荐|求助|需要|希望|耗时|费时|手动|无法|困难|痛点|重复录入|效率低|\b(?:needs?|needed|looking for|struggl\w*|manual(?:ly)?|time.consuming|cannot|can.t|unable|problem|feature request|how (?:can|do|to))\b',
     'ai': r'人工智能|大模型|语言模型|机器学习|语音识别|图像识别|\b(?:AI|LLMs?|GPT\w*|machine learning|Whisper|OCR|RAG|neural|language model)\b',
     'feasible': r'模型|识别|检索|转写|分类|预测|抽取|\b(?:API|model|OCR|Whisper|retrieval|transcri\w*|classif\w*|extract\w*|predict\w*)\b',
     'context': r'用户|员工|客户|团队|会议|文档|邮件|合同|报表|流程|患者|学生|教师|\b(?:users?|employees?|customers?|teams?|meetings?|documents?|emails?|contracts?|reports?|workflow|patients?|students?|teachers?|invoices?)\b',
-    'exclude': r'购买链接|限时优惠|纯教程|入门教程|\b(?:sponsored|buy now|limited.time offer|affiliate link|step.by.step tutorial|beginner.s guide)\b',
+    'exclude': r'购买链接|限时优惠|\b(?:sponsored|buy now|limited.time offer|affiliate link)\b',
     'negated_ai': r'不(?:需要|使用|用)\s*(?:AI|人工智能|大模型)|\b(?:without|no need for|do not (?:use|need)|don.t (?:use|need))\s+(?:an?\s+)?(?:AI|LLM|GPT|machine learning)\b',
 }
 
@@ -84,6 +85,10 @@ def contains(text, term):
 
 def evidence(text, pattern):
     match = re.search(pattern, text, re.I)
+    return match_evidence(text,match)
+
+
+def match_evidence(text,match):
     if not match:
         return None
     start, end = max(0, match.start()-80), min(len(text), match.end()+120)
@@ -93,7 +98,7 @@ def evidence(text, pattern):
 
 def nearby_evidence(text):
     """Inspect all matches, including late passages in long documents."""
-    needs = list(re.finditer(PATTERNS['need'], text, re.I))
+    needs = [m for m in re.finditer(PATTERNS['need'], text, re.I) if not context_rules.negated(text,m.start())]
     ai_matches = list(re.finditer(PATTERNS['ai'], text, re.I))
     positions=[m.start() for m in ai_matches]
     best=None
@@ -121,6 +126,10 @@ def label(text, dictionary, default):
 def judge_window(record, direction, config):
     text = record['content']
     hits = {key: evidence(text, pattern) for key, pattern in PATTERNS.items()}
+    denied_needs=[context_rules.span(m) for m in re.finditer(PATTERNS['need'],text,re.I) if context_rules.negated(text,m.start())]
+    hits['need']=match_evidence(text,context_rules.first_asserted(text,PATTERNS['need']))
+    hits['exclude']=match_evidence(text,context_rules.first_asserted(text,PATTERNS['exclude']))
+    tutorial=context_rules.tutorial_status(text)
     paired = nearby_evidence(text)
     if paired:
         hits['need'], hits['ai'] = paired
@@ -143,7 +152,7 @@ def judge_window(record, direction, config):
     score_detail['raw_evidence_score']=score
     score_detail['selected_method']=config.get('score_method','evidence_strength')
     if config.get('score_method','evidence_strength')=='completeness':score=score_detail['completeness']
-    excluded = bool(hits['exclude']) or supporting_only
+    excluded = bool(hits['exclude']) or supporting_only or tutorial['exclude']
     score_detail['raw_selected_score']=score
     if config.get('score_method','evidence_strength')=='evidence_strength':
         cap=.2 if excluded else .49 if not all(checks.values()) else 1.
@@ -152,13 +161,14 @@ def judge_window(record, direction, config):
         score_detail['cap_reason']='排除情形上限0.2' if excluded else '缺少硬条件上限0.49' if cap<1 else '硬条件完整，不附加限分'
     score_detail['final_score']=score
     opportunity = int(all(checks.values()) and not excluded and score >= config['threshold'])
-    hard_failures = [key for key, passed in checks.items() if not passed] + (['exclude'] if hits['exclude'] else []) + (['technical_context_only'] if supporting_only else [])
+    hard_failures = [key for key, passed in checks.items() if not passed] + (['exclude'] if hits['exclude'] else []) + (['tutorial_content'] if tutorial['exclude'] else []) + (['technical_context_only'] if supporting_only else [])
     failures=hard_failures+(['below_threshold'] if score<config['threshold'] else [])
     def quote(key):
         return hits[key]['text'] if hits[key] else ''
     return {**checks, 'opportunity': opportunity, 'excluded': excluded, 'confidence': score,
             'score_kind': '启发式证据强度，非校准概率' if config.get('score_method','evidence_strength')=='evidence_strength' else '旧版条件完整性分数，非校准概率',
             'score_detail':score_detail,'rule_completeness':score_detail['completeness'],
+            'content_context':{'version':context_rules.VERSION,'denied_need_spans':denied_needs,'tutorial':tutorial},
             'gate_passed':not hard_failures,'hard_gate_failures':hard_failures,
             'function': function if opportunity else '', 'industry': industry if opportunity else '',
             'label_scores': {'function': function_scores, 'industry': industry_scores},
@@ -207,6 +217,9 @@ def judge(record, direction, config):
         for span in component['evidence']:
             span['start']+=start;span['end']+=start
             span['text']=original[span['start']:span['end']]
+    context=result['content_context']
+    for span in context['denied_need_spans']+[s for s in (context['tutorial']['cue'],context['tutorial']['personal_problem']) if s]:
+        span['start']+=start;span['end']+=start;span['text']=original[span['start']:span['end']]
     for target, source in [('evidence','need'),('need_evidence','need'),('pain','need'),
                            ('user_evidence','context'),('target_user','context'),
                            ('ai_evidence','ai'),('feasibility_evidence','feasible')]:
