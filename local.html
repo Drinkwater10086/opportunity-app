@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>本地程序分析</title><link rel="stylesheet" href="/style.css"><script src="/local-ui.js?v=13-screening-flow" defer></script></head>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>本地程序分析</title><link rel="stylesheet" href="/style.css"><script src="/local-ui.js?v=15-grounded-names" defer></script></head>
 <body><main style="max-width:1200px;margin:auto;padding:24px"><header><h1>本地程序分析</h1><a href="/">返回采集与历史模型结果</a></header>
 <p>规则判别 → 标签词典分类 → 本地文本向量与聚类 → 公式评分。无需 API Key，不调用外部生成式模型。</p>
 <p class="hint">可比较TF-IDF、LSA和可选的本地多语言E5语义特征；E5需先准备模型文件，使用情况须披露。规则分数不是概率，语义模型不保证业务判断正确。方法、参数及评价需要团队独立审查。</p>
@@ -13,7 +13,7 @@
 <label>LSA 最大维数<input id="dimensions" type="number" value="32" min="2" max="128" required></label>
 <label>来源覆盖权重<input id="coverage" type="number" value="0.6" min="0" max="1" step="0.05" required></label>
 <label>记录规模权重<input id="scale" type="number" value="0.4" min="0" max="1" step="0.05" required></label>
-</div></details><button id="start">开始本地分析（不产生模型 API 费用）</button></form>
+</div></details><button id="start" disabled>开始本地分析（不产生模型 API 费用）</button></form>
 <p class="hint">每次运行保留独立实验记录，使用所选批次已采集的完整文本。方向词用于相关性筛选，不会重新采集数据。更换需求应返回主页新建采集批次。</p>
 <p id="notice" role="status" aria-live="polite"></p><label>本批次实验历史<select id="runs"></select></label></section>
 <section id="result" class="panel"><p>请选择批次并开始分析，或查看已有本地实验。</p></section></main></body></html>

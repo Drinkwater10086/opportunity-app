@@ -27,7 +27,7 @@ from sklearn.preprocessing import normalize
 
 from analysis_engine import FUNCTIONS, INDUSTRIES, rank_clusters
 
-VERSION = 'local-rules-v11-screening-flow'
+VERSION = 'local-rules-v12-grounded-topic-names'
 SEED = 42
 MAX_RECORDS = 5000
 MAX_CHARACTERS = 20_000_000
@@ -312,19 +312,57 @@ def topic_keywords(members):
     return [{'term':t,'record_ids':ids} for _,t,ids in ranked[:3]]
 
 
-def topic_name(members, representative, keywords, function):
-    """Use a real title for a singleton; do not invent a broader shared demand."""
+SCENARIO_TERMS={
+    '会议':'会议,meeting,meetings','邮件':'邮件,email,emails',
+    '合同':'合同,contract,contracts','发票':'发票,invoice,invoices',
+    '审批':'审批,approval,approvals','知识库':'知识库,knowledge base,knowledge bases',
+    'CRM':'CRM','人事':'人事,human resources','薪酬':'薪酬,payroll',
+    '销售':'销售,sales','报告':'报告,report,reports','报表':'报表,report table,report tables','文档':'文档,document,documents',
+    'PDF':'PDF,PDFs','办公':'办公,office,offices',
+}
+
+
+def topic_name(members, representative, keywords, function,judgments=None):
+    """Template summary from majority-supported source concepts; no generation."""
+    features=[]
+    for label,words in SCENARIO_TERMS.items():
+        evidence=[]
+        for record in members:
+            j=(judgments or {}).get(record['id'])
+            text=j['analysis_text'] if j else record['content']
+            offset=j['selected_context']['start'] if j else 0
+            hits=[]
+            for term in terms(words):
+                pattern=re.escape(term)
+                if term.isascii():pattern=r'(?<![A-Za-z0-9_])'+pattern+r'(?![A-Za-z0-9_])'
+                hit=re.search(pattern,text,re.I)
+                if hit:hits.append(hit)
+            if hits:
+                hit=min(hits,key=lambda m:(m.start(),-len(m.group())))
+                start,end=offset+hit.start(),offset+hit.end()
+                evidence.append({'record_id':record['id'],'field':'content','start':start,'end':end,
+                                 'text':record['content'][start:end]})
+        if len(evidence)>len(members)/2:
+            features.append({'label':label,'support_count':len(evidence),'record_count':len(members),'evidence':evidence})
+    features.sort(key=lambda f:(-f['support_count'],min(e['start'] for e in f['evidence']),f['label']))
+    if len(features)>1:features=[f for f in features if f['label']!='办公']
+    if features:
+        chosen=features[:2]
+        return {'name':'、'.join(f['label'] for f in chosen)+'场景的'+function+'候选需求',
+                'name_method':'固定中英场景词典映射，场景词须出现于超过半数成员的判别上下文；结合功能标签形成句式，不推断方向关系，未验证共同需求正确性',
+                'name_features':chosen,'name_evidence':None}
     if len(members)==1:
         field='title' if representative['title'].strip() else 'content'
         text=representative[field]
         excerpt=text[:180]
         return {'name':('原文标题：' if field=='title' else '原文节选：')+excerpt+('…' if len(text)>180 else ''),
                 'name_method':'单记录主题直接展示原文标题或正文节选，不能证明跨记录共同需求',
+                'name_features':[],
                 'name_evidence':{'record_id':representative['id'],'field':field,'start':0,'end':len(excerpt),'text':excerpt}}
     title='、'.join(k['term'] for k in keywords)
     return {'name':f'围绕{title[:60]}的{function}需求' if title else representative['title'][:90] or representative['content'][:90],
             'name_method':'多记录主题按原文关键词与功能标签组成固定句式，须核对各成员；关键词可能含泛词',
-            'name_evidence':None}
+            'name_features':[],'name_evidence':None}
 
 
 def screening_flow(judgments,threshold):
@@ -422,7 +460,7 @@ def analyze(batch, records, config, source_count):
             function = Counter(judgments[r['id']]['function'] for r in members).most_common(1)[0][0]
             industry = Counter(judgments[r['id']]['industry'] for r in members).most_common(1)[0][0]
             keywords = topic_keywords([{**r, 'content':judgments[r['id']]['analysis_text']} for r in members])
-            clusters.append({**topic_name(members,representative,keywords,function),
+            clusters.append({**topic_name(members,representative,keywords,function,judgments),
                              'keywords': keywords,
                              'representative_id': representative['id'], 'function': function,
                              'industry': industry, 'records': [r['id'] for r in members]})
@@ -460,4 +498,5 @@ def analyze(batch, records, config, source_count):
             'conclusion': f'{len(records)}条记录经规则筛选保留{len(positives)}条候选，形成{len(clusters)}个主题。'
                           '候选及排序仅为样本内研究线索，未验证市场需求或分类准确率。',
             'rules': {'patterns': PATTERNS, 'functions': FUNCTION_TERMS, 'industries': INDUSTRY_TERMS,
+                      'topic_scenarios':SCENARIO_TERMS,'topic_scene_min_support':'strict_majority',
                       'office_scope': OFFICE, 'ai_need_max_character_distance': 600}}
