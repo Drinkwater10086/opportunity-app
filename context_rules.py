@@ -1,7 +1,7 @@
 """Bounded lexical negation and content-intent rules; not full language understanding."""
 import re
 
-VERSION='negation-and-tutorial-v1'
+VERSION='negation-and-tutorial-v2'
 NEGATIVE_PREFIX=re.compile(
     r"(?:\b(?:(?:do|does|did|would|should|could|can)\s+not|(?:don|doesn|didn|wouldn|shouldn|couldn|can)['’]t|no\s+longer|never|not|no)"
     r"(?:\s+(?:really|actually|currently|have|face|experience|any|an?|the))*\s*$|(?:不再|并不|不|无需|无须|没有必要|没必要)\s*$)",re.I)
@@ -9,6 +9,9 @@ TUTORIAL=re.compile(r'本教程|纯教程|入门教程|教程演示|本文将(?:
 PERSONAL_PROBLEM=re.compile(
     r'(?:(?:我们|我|团队)[^。！？\n]{0,100}(?:无法|失败|困难|耗时|遇到))|'
     r'\b(?:I|we|our team|my team)\b[^.!?\n]{0,100}\b(?:cannot|can.t|unable|struggl\w*|failed|failing|problem)\b',re.I)
+SPECULATIVE_PREFIX=re.compile(
+    r'(?:\b(?:may|might|could|perhaps|possibly|potentially)(?:\s+(?:also|eventually|someday|have|face|a|an|the))*\s*$|'
+    r'(?:可能|或许|也许|假设)(?:将会|会|还|有|存在|一些)?\s*$)',re.I)
 
 
 def negated(text,start):
@@ -18,6 +21,15 @@ def negated(text,start):
 
 def first_asserted(text,pattern):
     return next((m for m in re.finditer(pattern,text,re.I) if not negated(text,m.start())),None)
+
+
+def speculative(text,start):
+    """Only an immediate tentative prefix; not a paragraph-wide rejection."""
+    return bool(SPECULATIVE_PREFIX.search(text[max(0,start-70):start]))
+
+
+def asserted_need(text,match):
+    return not negated(text,match.start()) and not speculative(text,match.start())
 
 
 def span(match):

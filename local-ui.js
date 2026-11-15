@@ -17,7 +17,7 @@ function recordEvidence(record,j){
   for(const e of f.evidence??[])s.append(node('p',`原文[${e.start},${e.end})：${e.text}`));
  }s.append(node('p',`${j.score_detail.cap_reason??'旧方法无附加限分'}；最终分数 ${j.confidence}。${j.score_detail.note}`));body.append(s);}
  if(j.selected_context)body.append(node('p',`判别上下文[${j.selected_context.start},${j.selected_context.end})：${j.selected_context.text}`));
- if(j.content_context){const c=j.content_context;for(const e of c.denied_need_spans??[])body.append(node('p',`否定需求词[${e.start},${e.end})：${e.text}`));if(c.tutorial?.cue)body.append(node('p','教程线索：'+c.tutorial.cue.text));}
+ if(j.content_context){const c=j.content_context;for(const e of c.denied_need_spans??[])body.append(node('p',`否定需求词[${e.start},${e.end})：${e.text}`));for(const e of c.record_tentative_need_spans??c.tentative_need_spans??[])body.append(node('p',`推测性需求词[${e.start},${e.end})：${e.text}（未作为肯定需求）；前文：${e.prefix_text??'见所选上下文'}`));if(c.tutorial?.cue)body.append(node('p','教程线索：'+c.tutorial.cue.text));}
  const traces=disclosure('全部判别证据与处理说明');for(const [key,span] of Object.entries(j.evidence_spans??{}))if(span)traces.append(node('p',`${key} · 原文[${span.start},${span.end})：${span.text}`));
  if(j.data_quality)traces.append(node('p',`分析字符 ${j.data_quality.analysis_characters} · 屏蔽代码/引用 ${j.data_quality.excluded_characters} 字符；${j.data_quality.note}`));body.append(traces);
  const original=disclosure('完整清洗文本');let loaded=false;original.ontoggle=()=>{if(original.open&&!loaded){loaded=true;original.append(node('pre',record.content));}};body.append(original);return body;
@@ -60,7 +60,7 @@ function report(result,base){
  if(!result.clusters.length)box.append(node('p','当前没有记录同时满足方向、需求、AI与可落地证据及评分阈值。可在下方查询记录查看具体原因；空结果不会生成虚构机会。'));
  for(const c of result.clusters){const section=node('article');section.dataset.themeId=c.id;section.append(node('h3',`${c.priority}. ${c.name}`),node('p',`样本内价值分 ${c.score.toFixed(2)} · ${c.count}条记录 · ${c.function} / ${c.industry} · ${c.sources.join('、')}`));
   section.append(node('p','查看构成这个主题的原始记录：'));const members=node('div');members.className='toolbar';for(const id of c.records){const button=node('button',id);button.setAttribute('aria-label',`查看记录 ${id}`);button.onclick=()=>inspector.focus(id);members.append(button);}section.append(members,link('导出立项策划 Markdown',base+`/proposal/${c.id}.md`));
-  const detail=disclosure('主题命名与评分依据');detail.append(node('p',`代表记录 ${c.representative_id}；主题名由原文关键词与功能标签按固定句式组成，须核验。`),node('p',`近重复组数 ${c.unique_evidence_count??c.count}；调整分 ${c.duplicate_adjusted_score??c.score}仅作对照；正式分按记录规模计算。`));section.append(detail);planEditor(section,base,c.id);box.append(section);
+  const detail=disclosure('主题命名与评分依据');detail.append(node('p',`代表记录 ${c.representative_id}；${c.name_method??'历史主题命名方法见实验参数'}。`),node('p',`近重复组数 ${c.unique_evidence_count??c.count}；调整分 ${c.duplicate_adjusted_score??c.score}仅作对照；正式分按记录规模计算。`));section.append(detail);planEditor(section,base,c.id);box.append(section);
  }
  box.append(inspector.element);const e=result.evaluation.primary;
  if(result.candidate_count<2)box.append(node('p','候选少于2条，轮廓系数无法计算；这是评价样本条件，不代表采集或程序运行失败。'));

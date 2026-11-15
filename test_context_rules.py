@@ -50,3 +50,46 @@ def test_plural_office_terms_have_explicit_traceable_scope_hits():
         result=judge(f'Our team needs AI transcription for {term} using a Whisper model API.')
         assert result['opportunity']==1
         assert term in result['scope_terms']
+
+
+@pytest.mark.parametrize('prefix',['may','might','could','possibly','perhaps'])
+def test_tentative_need_is_not_asserted_demand(prefix):
+    text=f'Our team {prefix} need AI meeting transcription using a Whisper model API.'
+    result=judge(text)
+    assert result['opportunity']==0
+    assert not result['real_need']
+    assert result['content_context']['tentative_need_spans']
+    assert result['content_context']['record_tentative_need_spans']
+    for span in result['content_context']['tentative_need_spans']:
+        assert text[span['start']:span['end']]==span['text']
+
+
+def test_tentative_sentence_does_not_remove_separate_actual_request():
+    text='Our team might need storage someday. We need AI meeting transcription using a Whisper API.'
+    assert judge(text)['opportunity']==1
+    cues=judge(text)['content_context']['record_tentative_need_spans']
+    assert cues and 'might' in cues[0]['prefix_text']
+    # Could modifies the proposed solution/question, not the asserted need.
+    assert judge('Could our team use a Whisper AI model API? We need meeting transcription.')['opportunity']==1
+    assert judge('我们团队可能需要AI会议转写，技术方案为现有Whisper模型API和本地文档。')['opportunity']==0
+    assert judge('我们团队需要AI会议转写，技术方案为现有Whisper模型API和本地文档。')['opportunity']==1
+
+
+def test_singleton_name_is_exact_traceable_source_excerpt():
+    record={'id':'S1','title':'Split PDF transcripts into speaker turns','content':'body'}
+    result=core.topic_name([record],record,[{'term':'correct'}],'图像识别')
+    span=result['name_evidence']
+    assert result['name']=='原文标题：'+record['title']
+    assert record[span['field']][span['start']:span['end']]==span['text']
+    record={**record,'title':'','content':'需求'*150}
+    result=core.topic_name([record],record,[],'文本生成')
+    assert result['name'].endswith('…')
+    assert result['name_evidence']['end']==180
+
+
+def test_mixed_chinese_ai_boundaries_do_not_match_english_substrings():
+    import re
+    for text in ['使用AI会议转写','调用Whisper模型','通过OCR识别文档','使用GPT4处理邮件']:
+        assert re.search(core.PATTERNS['ai'],text,re.I)
+    for text in ['email','storage','chair','staircase','whispering','neuralgia','OCRing','my_AI_module']:
+        assert not re.search(core.PATTERNS['ai'],text,re.I)

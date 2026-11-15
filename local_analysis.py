@@ -25,7 +25,7 @@ from sklearn.preprocessing import normalize
 
 from analysis_engine import FUNCTIONS, INDUSTRIES, rank_clusters
 
-VERSION = 'local-rules-v5-context-negation'
+VERSION = 'local-rules-v6-tentative-demand'
 SEED = 42
 MAX_RECORDS = 5000
 MAX_CHARACTERS = 20_000_000
@@ -65,7 +65,7 @@ INDUSTRY_TERMS = dict(zip(INDUSTRIES, [
 OFFICE = '会议,邮件,审批,合同,办公,销售,人事,财务,meeting,meetings,email,emails,approval,approvals,contract,contracts,office,offices,knowledge base,knowledge bases,sales,crm,human resources,invoice,invoices,payroll'
 PATTERNS = {
     'need': r'有没有|求推荐|求助|需要|希望|耗时|费时|手动|无法|困难|痛点|重复录入|效率低|\b(?:needs?|needed|looking for|struggl\w*|manual(?:ly)?|time.consuming|cannot|can.t|unable|problem|feature request|how (?:can|do|to))\b',
-    'ai': r'人工智能|大模型|语言模型|机器学习|语音识别|图像识别|\b(?:AI|LLMs?|GPT\w*|machine learning|Whisper|OCR|RAG|neural|language model)\b',
+    'ai': r'人工智能|大模型|语言模型|机器学习|语音识别|图像识别|(?<![A-Za-z0-9_])(?:AI|LLMs?|GPT[A-Za-z0-9]*|machine learning|Whisper|OCR|RAG|neural|language model)(?![A-Za-z0-9_])',
     'feasible': r'模型|识别|检索|转写|分类|预测|抽取|\b(?:API|model|OCR|Whisper|retrieval|transcri\w*|classif\w*|extract\w*|predict\w*)\b',
     'context': r'用户|员工|客户|团队|会议|文档|邮件|合同|报表|流程|患者|学生|教师|\b(?:users?|employees?|customers?|teams?|meetings?|documents?|emails?|contracts?|reports?|workflow|patients?|students?|teachers?|invoices?)\b',
     'exclude': r'购买链接|限时优惠|\b(?:sponsored|buy now|limited.time offer|affiliate link)\b',
@@ -98,7 +98,7 @@ def match_evidence(text,match):
 
 def nearby_evidence(text):
     """Inspect all matches, including late passages in long documents."""
-    needs = [m for m in re.finditer(PATTERNS['need'], text, re.I) if not context_rules.negated(text,m.start())]
+    needs = [m for m in re.finditer(PATTERNS['need'], text, re.I) if context_rules.asserted_need(text,m)]
     ai_matches = list(re.finditer(PATTERNS['ai'], text, re.I))
     positions=[m.start() for m in ai_matches]
     best=None
@@ -127,7 +127,8 @@ def judge_window(record, direction, config):
     text = record['content']
     hits = {key: evidence(text, pattern) for key, pattern in PATTERNS.items()}
     denied_needs=[context_rules.span(m) for m in re.finditer(PATTERNS['need'],text,re.I) if context_rules.negated(text,m.start())]
-    hits['need']=match_evidence(text,context_rules.first_asserted(text,PATTERNS['need']))
+    tentative_needs=[context_rules.span(m) for m in re.finditer(PATTERNS['need'],text,re.I) if context_rules.speculative(text,m.start())]
+    hits['need']=match_evidence(text,next((m for m in re.finditer(PATTERNS['need'],text,re.I) if context_rules.asserted_need(text,m)),None))
     hits['exclude']=match_evidence(text,context_rules.first_asserted(text,PATTERNS['exclude']))
     tutorial=context_rules.tutorial_status(text)
     paired = nearby_evidence(text)
@@ -168,7 +169,7 @@ def judge_window(record, direction, config):
     return {**checks, 'opportunity': opportunity, 'excluded': excluded, 'confidence': score,
             'score_kind': '启发式证据强度，非校准概率' if config.get('score_method','evidence_strength')=='evidence_strength' else '旧版条件完整性分数，非校准概率',
             'score_detail':score_detail,'rule_completeness':score_detail['completeness'],
-            'content_context':{'version':context_rules.VERSION,'denied_need_spans':denied_needs,'tutorial':tutorial},
+            'content_context':{'version':context_rules.VERSION,'denied_need_spans':denied_needs,'tentative_need_spans':tentative_needs,'tutorial':tutorial},
             'gate_passed':not hard_failures,'hard_gate_failures':hard_failures,
             'function': function if opportunity else '', 'industry': industry if opportunity else '',
             'label_scores': {'function': function_scores, 'industry': industry_scores},
@@ -218,8 +219,15 @@ def judge(record, direction, config):
             span['start']+=start;span['end']+=start
             span['text']=original[span['start']:span['end']]
     context=result['content_context']
-    for span in context['denied_need_spans']+[s for s in (context['tutorial']['cue'],context['tutorial']['personal_problem']) if s]:
+    for span in context['denied_need_spans']+context['tentative_need_spans']+[s for s in (context['tutorial']['cue'],context['tutorial']['personal_problem']) if s]:
         span['start']+=start;span['end']+=start;span['text']=original[span['start']:span['end']]
+    # Selection may move to another window after removing a tentative match.
+    # Keep record-wide cues so the reason for that change stays inspectable.
+    context['record_tentative_need_spans']=[
+        {'start':m.start(),'end':m.end(),'text':original[m.start():m.end()],
+         'prefix_start':max(0,m.start()-70),'prefix_text':original[max(0,m.start()-70):m.start()]}
+        for m in re.finditer(PATTERNS['need'],structured['text'],re.I)
+        if context_rules.speculative(structured['text'],m.start())]
     for target, source in [('evidence','need'),('need_evidence','need'),('pain','need'),
                            ('user_evidence','context'),('target_user','context'),
                            ('ai_evidence','ai'),('feasibility_evidence','feasible')]:
@@ -285,6 +293,21 @@ def topic_keywords(members):
             ranked.append((len(supporters)+2*title_hits, term, supporters))
     ranked.sort(key=lambda x: (-x[0], x[1]))
     return [{'term':t,'record_ids':ids} for _,t,ids in ranked[:3]]
+
+
+def topic_name(members, representative, keywords, function):
+    """Use a real title for a singleton; do not invent a broader shared demand."""
+    if len(members)==1:
+        field='title' if representative['title'].strip() else 'content'
+        text=representative[field]
+        excerpt=text[:180]
+        return {'name':('原文标题：' if field=='title' else '原文节选：')+excerpt+('…' if len(text)>180 else ''),
+                'name_method':'单记录主题直接展示原文标题或正文节选，不能证明跨记录共同需求',
+                'name_evidence':{'record_id':representative['id'],'field':field,'start':0,'end':len(excerpt),'text':excerpt}}
+    title='、'.join(k['term'] for k in keywords)
+    return {'name':f'围绕{title[:60]}的{function}需求' if title else representative['title'][:90] or representative['content'][:90],
+            'name_method':'多记录主题按原文关键词与功能标签组成固定句式，须核对各成员；关键词可能含泛词',
+            'name_evidence':None}
 
 
 def analyze(batch, records, config, source_count):
@@ -361,9 +384,7 @@ def analyze(batch, records, config, source_count):
             function = Counter(judgments[r['id']]['function'] for r in members).most_common(1)[0][0]
             industry = Counter(judgments[r['id']]['industry'] for r in members).most_common(1)[0][0]
             keywords = topic_keywords([{**r, 'content':judgments[r['id']]['analysis_text']} for r in members])
-            title = '、'.join(k['term'] for k in keywords)
-            clusters.append({'name': f'围绕{title[:60]}的{function}需求' if title else representative['title'][:90] or representative['content'][:90],
-                             'name_method': '原文关键词按记录覆盖与标题命中提取，使用固定句式概括；须核对代表记录',
+            clusters.append({**topic_name(members,representative,keywords,function),
                              'keywords': keywords,
                              'representative_id': representative['id'], 'function': function,
                              'industry': industry, 'records': [r['id'] for r in members]})
