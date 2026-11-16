@@ -20,9 +20,10 @@ import local_submission
 import analysis_engine
 import local_planning
 import collection_screening
+import need_intent
 from local_routes import LocalConfig
 
-MODULES=(local_analysis,local_preprocessing,local_embeddings,evidence_scoring,context_rules,local_value,local_business,local_cache,local_recall,local_submission,collection_screening,analysis_engine,local_planning)
+MODULES=(local_analysis,local_preprocessing,local_embeddings,evidence_scoring,context_rules,local_value,local_business,local_cache,local_recall,local_submission,collection_screening,need_intent,analysis_engine,local_planning)
 OUTPUT_KEYS=('judgments','clusters','evaluation','representation','input_sha256',
              'candidate_count','record_count','duplicate_diagnostics')
 

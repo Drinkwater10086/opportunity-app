@@ -10,9 +10,11 @@ const factorNames={quality:'正文质量',relevant:'方向相关性',real_need:'
 const reasonNames={quality:'正文过短',relevant:'方向词未命中',real_need:'无肯定需求线索',context:'无场景词',ai_core:'AI与需求关系不足或被否定',feasible:'无技术实现线索',classified:'功能标签未命中',exclude:'推广排除词',tutorial_content:'教程内容，未发现实际困难',job_posting:'招聘或求职内容，未发现应用处理诉求',solution_showcase:'产品介绍或展示，缺少明确未解决求助',compiled_background:'文献或资讯汇编，仅作背景',below_threshold:'评分低于阈值',technical_context_only:'仅为技术背景',technical_incident:'普通技术故障，缺少业务处理任务'};
 function disclosure(title){const d=node('details');d.append(node('summary',title));return d;}
 reasonNames.collection_noise='采集阶段内容排除';
+Object.assign(reasonNames,{declined_ai:'诉求是关闭或退出AI功能',resolved_application:'已有方案或已解决流程介绍',engineering_consistency:'并发或幂等问题，未发现AI核心需求',risk_without_application_request:'安全风险讨论，缺少应用处理诉求',speculative_application:'设想性方案，缺少实际求助'});
 function recordEvidence(record,j){
  const body=node('div');if(!j){body.append(node('p','此记录没有保存的判别结果，请核查分析完整性。'));return body;}
  body.append(node('p',j.reason));
+ if(j.need_intent){const d=disclosure('需求意图与具体任务');if(j.need_intent.reason)d.append(node('p',reasonNames[j.need_intent.reason]??j.need_intent.reason));if(j.need_intent.goal)d.append(node('p',`原文[${j.need_intent.goal.start},${j.need_intent.goal.end})：${j.need_intent.goal.text}`));if(j.need_intent.goal_function)d.append(node('p','具体任务归类：'+j.need_intent.goal_function));for(const s of Object.values(j.record_intent?.signals??{}))if(s)d.append(node('p',`整条记录依据[${s.start},${s.end})：${s.text}`));body.append(d);}
  if(j.collection_screening&&j.collection_screening.role!=='unclassified'){const s=j.collection_screening,d=disclosure(`${s.stage==='analysis_recheck'?'历史资料内容补检':'采集内容筛查'}：${s.label} · ${s.exclude?'已隔离，判为非机会':'保留具体业务求助'}`);for(const e of s.signals)d.append(node('p',`${e.origin==='title'?'标题':'正文'}[${e.start},${e.end})：${e.text}`));d.append(node('p','完整记录保留于清洗记录；隔离项不参与主题聚类和价值排序。'));body.append(d);}
  try{const url=new URL(record.url);if(['https:','http:'].includes(url.protocol))body.append(link('查看公开来源',url.href));}catch{}
  if(j.score_detail){const s=disclosure(`评分依据：${j.score_kind}；硬条件完整性 ${j.rule_completeness}`);for(const [key,f] of Object.entries(j.score_detail.components)){

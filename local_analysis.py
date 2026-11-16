@@ -17,6 +17,7 @@ import local_business
 import local_cache
 import local_recall
 import collection_screening
+import need_intent
 from pathlib import Path
 from bisect import bisect_left
 from collections import Counter
@@ -32,7 +33,7 @@ from sklearn.preprocessing import normalize
 
 from analysis_engine import FUNCTIONS, INDUSTRIES, rank_clusters
 
-VERSION = 'local-rules-v21-collection-screening'
+VERSION = 'local-rules-v22-unresolved-intent'
 SEED = 42
 MAX_RECORDS = 5000
 MAX_CHARACTERS = 50_000_000
@@ -86,6 +87,7 @@ PATTERNS = {
     'exclude': r'购买链接|限时优惠|\b(?:sponsored|buy now|limited.time offer|affiliate link)\b',
     'negated_ai': r'不(?:需要|使用|用)\s*(?:AI|人工智能|大模型)|\b(?:without|no need for|do not (?:use|need)|don.t (?:use|need))\s+(?:an?\s+)?(?:AI|LLM|GPT|machine learning)\b',
 }
+PATTERNS['need'] += '|'+need_intent.UNMET_PATTERN
 
 
 def terms(text):
@@ -186,6 +188,12 @@ def judge_window(record, direction, config):
     if scope_definition['mode']=='ai_profile':
         scope_hits=list(dict.fromkeys(scope_hits+[match.group() for match in re.finditer(PATTERNS['ai'],text,re.I)]))
     function, function_scores = label(text, FUNCTION_TERMS, '')
+    intent=need_intent.inspect(text)
+    record_intent=record.get('_record_intent')
+    if record_intent and record_intent['exclude'] and (not record_intent['open_task'] or record_intent['reason'] in ('engineering_consistency','declined_ai')):
+        intent={**intent,'exclude':True,'reason':record_intent['reason']}
+    if intent['goal_function']:
+        function=intent['goal_function']
     industry, industry_scores = label(text, INDUSTRY_TERMS, '其他')
     quality = len(text.strip()) >= 30
     supporting_only = record.get('metadata', {}).get('provenance', {}).get('evidence_role') == 'technical_context'
@@ -201,7 +209,7 @@ def judge_window(record, direction, config):
     if config.get('score_method','evidence_strength')=='completeness':score=score_detail['completeness']
     business_profile=local_business.inspect(text)
     screening=record.get('_collection_screening') or collection_screening.inspect(record.get('title',''),text,record.get('metadata',{}).get('provenance',{}))
-    excluded = screening['exclude'] or business_profile['technical_only'] or bool(hits['exclude']) or supporting_only or tutorial['exclude'] or job_posting['exclude'] or compilation['exclude'] or showcase['exclude']
+    excluded = intent['exclude'] or screening['exclude'] or business_profile['technical_only'] or bool(hits['exclude']) or supporting_only or tutorial['exclude'] or job_posting['exclude'] or compilation['exclude'] or showcase['exclude']
     score_detail['raw_selected_score']=score
     if config.get('score_method','evidence_strength')=='evidence_strength':
         cap=.2 if excluded else .49 if not all(checks.values()) else 1.
@@ -215,10 +223,11 @@ def judge_window(record, direction, config):
     if compilation['exclude']:hard_failures.append('compiled_background')
     if showcase['exclude']:hard_failures.append('solution_showcase')
     if screening['exclude']:hard_failures.append('collection_noise')
+    if intent['exclude']:hard_failures.append(intent['reason'])
     failures=hard_failures+(['below_threshold'] if score<config['threshold'] else [])
     def quote(key):
         return hits[key]['text'] if hits[key] else ''
-    return {**checks, 'business_profile':business_profile, 'collection_screening':screening, 'opportunity': opportunity, 'excluded': excluded, 'confidence': score,
+    return {**checks, 'business_profile':business_profile, 'collection_screening':screening, 'need_intent':intent, 'opportunity': opportunity, 'excluded': excluded, 'confidence': score,
             'score_kind': '启发式证据强度，非校准概率' if config.get('score_method','evidence_strength')=='evidence_strength' else '旧版条件完整性分数，非校准概率',
             'score_detail':score_detail,'rule_completeness':score_detail['completeness'],
             'content_context':{'version':context_rules.VERSION,'denied_need_spans':denied_needs,'tentative_need_spans':tentative_needs,'tutorial':tutorial},
@@ -244,6 +253,7 @@ def _judge(record, direction, config):
     # in the full masked record; do not reinterpret title offsets as body offsets.
     record={**record,'_job_posting':context_rules.job_posting_status(record.get('title',''),structured['text'])}
     record['_collection_screening']=screening
+    record['_record_intent']=need_intent.inspect(structured['text'])
     record['_compilation']=context_rules.compilation_status(record.get('title',''),structured['text'])
     record['_showcase']=context_rules.showcase_status(record.get('title',''),structured['text'])
     record['_direction_scope']=direction_scope(direction,config)
@@ -259,21 +269,21 @@ def _judge(record, direction, config):
         if signals < 3:
             continue
         result = judge_window({**record, 'content': window}, direction, config)
-        candidates.append((int(result['gate_passed']), result['confidence'], -start, start, end, result))
+        candidates.append((int(result['gate_passed']), bool(result['need_intent']['unresolved']), result['confidence'], -start, start, end, result))
     if not candidates and fallback:
         _, start, end, window = fallback
         result = judge_window({**record, 'content': window}, direction, config)
-        candidates.append((int(result['gate_passed']), result['confidence'], -start, start, end, result))
+        candidates.append((int(result['gate_passed']), bool(result['need_intent']['unresolved']), result['confidence'], -start, start, end, result))
     if candidates:
-        _, _, _, start, end, result = max(candidates, key=lambda x:x[:3])
+        _, _, _, _, start, end, result = max(candidates, key=lambda x:x[:4])
     else:
         start, end, window = next(preprocessing.windows(structured),(0,0,''))
         result = judge_window({**record, 'content': window}, direction, config)
     # Store separately valid passages without combining missing gates across them.
     # Ranked selection preserves the primary passage; overlapping windows are skipped.
     contexts=[];business_contexts=[]
-    eligible=sorted([row for row in candidates if row[5]['gate_passed']],key=lambda row:row[:3],reverse=True)
-    for _,score,_,lo,hi,assessment in [(0,result['confidence'],0,start,end,result)]+eligible:
+    eligible=sorted([row for row in candidates if row[6]['gate_passed']],key=lambda row:row[:4],reverse=True)
+    for _,_,score,_,lo,hi,assessment in [(0,False,result['confidence'],0,start,end,result)]+eligible:
         if any(lo<entry['end'] and hi>entry['start'] for entry in contexts):continue
         if len(contexts)>=8:break
         signals={}
@@ -289,6 +299,12 @@ def _judge(record, direction, config):
     result['business_contexts']=business_contexts
     result['evidence_context_summary']={'stored_count':len(contexts),'eligible_window_count':len(eligible),
         'maximum_stored':8,'method':'主判别段优先；其余独立通过硬条件的窗口按分数选取，最多8段，重叠不重复保存'}
+    for span in [result['need_intent']['goal'],result['need_intent']['unresolved'],result['need_intent']['request'],*result['need_intent']['signals'].values()]:
+        if span:
+            span['start']+=start;span['end']+=start;span['text']=original[span['start']:span['end']]
+    result['record_intent']=record['_record_intent']
+    for span in [result['record_intent']['goal'],result['record_intent']['unresolved'],result['record_intent']['request'],*result['record_intent']['signals'].values()]:
+        if span:span['text']=original[span['start']:span['end']]
     for span in result['business_profile']['signals'].values():
         if span:
             span['start']+=start;span['end']+=start;span['text']=original[span['start']:span['end']]
@@ -335,7 +351,7 @@ def _judge(record, direction, config):
 
 
 _RULE_SIGNATURE=tuple(hashlib.sha256(Path(module).read_bytes()).hexdigest() for module in
-                      (__file__,preprocessing.__file__,context_rules.__file__,evidence_scoring.__file__,local_business.__file__,collection_screening.__file__))
+                      (__file__,preprocessing.__file__,context_rules.__file__,evidence_scoring.__file__,local_business.__file__,collection_screening.__file__,need_intent.__file__))
 
 
 def judge(record,direction,config):
@@ -346,17 +362,28 @@ def judge(record,direction,config):
 
 
 def clustered_labels(distances,threshold,positives,judgments,mode):
-    if mode=='flat':return partition(distances,threshold)
-    if mode!='function_then_text':raise ValueError('未知聚类方式')
-    labels=np.empty(len(positives),dtype=int);next_label=0
-    groups={}
-    for index,record in enumerate(positives):groups.setdefault(judgments[record['id']]['function'],[]).append(index)
-    for function in sorted(groups):
-        indices=np.array(groups[function],dtype=int)
-        subgroup=partition(distances[np.ix_(indices,indices)],threshold)
-        for group in sorted(set(subgroup)):
-            labels[indices[subgroup==group]]=next_label;next_label+=1
-    return labels
+    if mode=='flat':labels=partition(distances,threshold)
+    elif mode=='function_then_text':
+        labels=np.empty(len(positives),dtype=int);next_label=0
+        groups={}
+        for index,record in enumerate(positives):groups.setdefault(judgments[record['id']]['function'],[]).append(index)
+        for function in sorted(groups):
+            indices=np.array(groups[function],dtype=int)
+            subgroup=partition(distances[np.ix_(indices,indices)],threshold)
+            for group in sorted(set(subgroup)):
+                labels[indices[subgroup==group]]=next_label;next_label+=1
+    else:raise ValueError('未知聚类方式')
+    # Split only explicit task conflicts; keyword-only labels do not impose a new constraint.
+    guarded=np.empty(len(positives),dtype=int);next_label=0
+    for group in sorted(set(labels)):
+        members=np.flatnonzero(labels==group)
+        tasks={index:judgments[positives[index]['id']].get('need_intent',{}).get('goal_function') for index in members}
+        if len({task for task in tasks.values() if task})>1:
+            for task in sorted(set(tasks.values()),key=lambda value:value or ''):
+                guarded[[index for index in members if tasks[index]==task]]=next_label;next_label+=1
+        else:
+            guarded[members]=next_label;next_label+=1
+    return guarded
 
 
 def partition(distances, threshold):

@@ -5,11 +5,11 @@ no source popularity or generated rationale can increase evidence strength.
 """
 import re
 
-VERSION='evidence-strength-v2-direction-scope'
+VERSION='evidence-strength-v3-unresolved-need'
 WEIGHTS={'quality':.05,'relevant':.15,'real_need':.25,'context':.15,
          'ai_core':.20,'feasible':.15,'classified':.05}
 REQUEST=r'有没有|求推荐|求助|\b(?:looking for|feature request|how can)\b'
-PROBLEM=r'耗时|费时|无法|困难|痛点|重复录入|效率低|\b(?:struggl\w*|time.consuming|cannot|can.t|unable|problem)\b'
+PROBLEM=r'耗时|费时|无法|困难|痛点|重复录入|效率低|未找到|找不到|\b(?:haven[\x27’]t found|have not found|haven[\x27’]t been able|struggl\w*|time.consuming|cannot|can.t|unable|problem)\b'
 GENERIC=r'需要|希望|\b(?:needs?|needed|how do|how to)\b'
 
 

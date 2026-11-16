@@ -27,6 +27,7 @@ import local_cache
 import local_recall
 import local_submission
 import collection_screening
+import need_intent
 import analysis_engine
 
 RUN_LOCK = threading.Lock()
@@ -93,7 +94,7 @@ def install(app, connect, get_records, require_usable_batch, root, sources, csv_
             result = local_analysis.analyze(batch, records, config, source_count)
             result['source_code_sha256'] = hashlib.sha256(Path(local_analysis.__file__).read_bytes()).hexdigest()
             result['source_hashes'] = {module.__name__: hashlib.sha256(Path(module.__file__).read_bytes()).hexdigest()
-                                       for module in (local_analysis, local_preprocessing, local_comparison, local_planning, local_embeddings, evidence_scoring, context_rules, local_value, local_business, local_cache, local_recall, local_submission, collection_screening, analysis_engine)}
+                                       for module in (local_analysis, local_preprocessing, local_comparison, local_planning, local_embeddings, evidence_scoring, context_rules, local_value, local_business, local_cache, local_recall, local_submission, collection_screening, need_intent, analysis_engine)}
             # Retain the exact inputs used by this run, not a future mutable database view.
             result['input_records'] = records
             result['proposal_drafts']=local_planning.initial_drafts(result)
