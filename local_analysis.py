@@ -16,6 +16,7 @@ import local_value
 import local_business
 import local_cache
 import local_recall
+import collection_screening
 from pathlib import Path
 from bisect import bisect_left
 from collections import Counter
@@ -31,7 +32,7 @@ from sklearn.preprocessing import normalize
 
 from analysis_engine import FUNCTIONS, INDUSTRIES, rank_clusters
 
-VERSION = 'local-rules-v20-business-evidence'
+VERSION = 'local-rules-v21-collection-screening'
 SEED = 42
 MAX_RECORDS = 5000
 MAX_CHARACTERS = 50_000_000
@@ -199,7 +200,8 @@ def judge_window(record, direction, config):
     score_detail['selected_method']=config.get('score_method','evidence_strength')
     if config.get('score_method','evidence_strength')=='completeness':score=score_detail['completeness']
     business_profile=local_business.inspect(text)
-    excluded = business_profile['technical_only'] or bool(hits['exclude']) or supporting_only or tutorial['exclude'] or job_posting['exclude'] or compilation['exclude'] or showcase['exclude']
+    screening=record.get('_collection_screening') or collection_screening.inspect(record.get('title',''),text,record.get('metadata',{}).get('provenance',{}))
+    excluded = screening['exclude'] or business_profile['technical_only'] or bool(hits['exclude']) or supporting_only or tutorial['exclude'] or job_posting['exclude'] or compilation['exclude'] or showcase['exclude']
     score_detail['raw_selected_score']=score
     if config.get('score_method','evidence_strength')=='evidence_strength':
         cap=.2 if excluded else .49 if not all(checks.values()) else 1.
@@ -212,10 +214,11 @@ def judge_window(record, direction, config):
     if business_profile['technical_only']:hard_failures.append('technical_incident')
     if compilation['exclude']:hard_failures.append('compiled_background')
     if showcase['exclude']:hard_failures.append('solution_showcase')
+    if screening['exclude']:hard_failures.append('collection_noise')
     failures=hard_failures+(['below_threshold'] if score<config['threshold'] else [])
     def quote(key):
         return hits[key]['text'] if hits[key] else ''
-    return {**checks, 'business_profile':business_profile, 'opportunity': opportunity, 'excluded': excluded, 'confidence': score,
+    return {**checks, 'business_profile':business_profile, 'collection_screening':screening, 'opportunity': opportunity, 'excluded': excluded, 'confidence': score,
             'score_kind': '启发式证据强度，非校准概率' if config.get('score_method','evidence_strength')=='evidence_strength' else '旧版条件完整性分数，非校准概率',
             'score_detail':score_detail,'rule_completeness':score_detail['completeness'],
             'content_context':{'version':context_rules.VERSION,'denied_need_spans':denied_needs,'tentative_need_spans':tentative_needs,'tutorial':tutorial},
@@ -234,9 +237,13 @@ def judge_window(record, direction, config):
 def _judge(record, direction, config):
     original = record['content']
     structured = preprocessing.structure(original)
+    screening=collection_screening.inspect(record.get('title',''),original,record.get('metadata',{}).get('provenance',{}),view=structured['text'])
+    stored_screening=record.get('metadata',{}).get('collection_screening',{})
+    screening['stage']='collection_verified' if stored_screening.get('version')==collection_screening.VERSION else 'analysis_recheck'
     # Genre cues may sit outside the selected demand window. Keep source offsets
     # in the full masked record; do not reinterpret title offsets as body offsets.
     record={**record,'_job_posting':context_rules.job_posting_status(record.get('title',''),structured['text'])}
+    record['_collection_screening']=screening
     record['_compilation']=context_rules.compilation_status(record.get('title',''),structured['text'])
     record['_showcase']=context_rules.showcase_status(record.get('title',''),structured['text'])
     record['_direction_scope']=direction_scope(direction,config)
@@ -328,7 +335,7 @@ def _judge(record, direction, config):
 
 
 _RULE_SIGNATURE=tuple(hashlib.sha256(Path(module).read_bytes()).hexdigest() for module in
-                      (__file__,preprocessing.__file__,context_rules.__file__,evidence_scoring.__file__,local_business.__file__))
+                      (__file__,preprocessing.__file__,context_rules.__file__,evidence_scoring.__file__,local_business.__file__,collection_screening.__file__))
 
 
 def judge(record,direction,config):

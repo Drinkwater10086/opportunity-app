@@ -22,6 +22,7 @@ import source_policy
 import auth
 import local_routes
 import source_catalog
+import collection_screening
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / 'data'
@@ -119,7 +120,7 @@ def collect(batch_id):
             try:
                 window_end = datetime.fromisoformat(batch['created_at']).replace(microsecond=0)
                 items, metadata = sources.fetch(source, batch['query'], batch['limit_count'], batch['days'], window_end=window_end)
-                rows, meta_rows = [], []
+                rows, meta_rows, screening_reports = [], [], []
                 pending_seen, pending_urls = set(), set()
                 pending_count = count
                 for item in items:
@@ -129,12 +130,15 @@ def collect(batch_id):
                         continue
                     pending_seen.add(key)
                     pending_urls.add(item['url'])
+                    screening = collection_screening.inspect(item['title'], content, item.get('provenance', {}))
+                    screening_reports.append(screening)
                     pending_count += 1
                     rid = f'S{pending_count:05d}'
                     rows.append((batch_id, rid, sources.NAMES[source], item['url'], item['title'],
                                  item['raw_text'], content, item['published_at'], item['updated_at'],
                                  item['stars'], datetime.now(timezone.utc).isoformat()))
                     meta_rows.append((batch_id, rid, json.dumps({'heat': item['heat'], 'license': item['license'],
+                        'collection_screening': screening,
                         'provenance': item.get('provenance', {}),
                         'reliability': item.get('reliability', {}),
                         'privacy': {'method': 'rule-redaction-v3', 'complete_personal_data_detection': False,
@@ -142,6 +146,7 @@ def collect(batch_id):
                         'transformations': 'HTML转文本（如适用）、明显联系方式脱敏、Unicode及空白规范化、清洗文本去URL'}, ensure_ascii=False)))
                 metadata['kept_count'] = len(rows)
                 metadata['deduplicated_count'] = len(items)-len(rows)
+                metadata['content_screening'] = collection_screening.summarize(screening_reports)
                 with connect() as db:
                     db.executemany('INSERT INTO records VALUES (?,?,?,?,?,?,?,?,?,?,?)', rows)
                     db.executemany('INSERT INTO record_meta VALUES (?,?,?)', meta_rows)

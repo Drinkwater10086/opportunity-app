@@ -9,9 +9,11 @@ function link(text,url){const a=node('a',text);a.href=url;a.className='link';ret
 const factorNames={quality:'正文质量',relevant:'方向相关性',real_need:'需求线索',context:'使用场景',ai_core:'AI关联性',feasible:'实现线索',classified:'功能分类'};
 const reasonNames={quality:'正文过短',relevant:'方向词未命中',real_need:'无肯定需求线索',context:'无场景词',ai_core:'AI与需求关系不足或被否定',feasible:'无技术实现线索',classified:'功能标签未命中',exclude:'推广排除词',tutorial_content:'教程内容，未发现实际困难',job_posting:'招聘或求职内容，未发现应用处理诉求',solution_showcase:'产品介绍或展示，缺少明确未解决求助',compiled_background:'文献或资讯汇编，仅作背景',below_threshold:'评分低于阈值',technical_context_only:'仅为技术背景',technical_incident:'普通技术故障，缺少业务处理任务'};
 function disclosure(title){const d=node('details');d.append(node('summary',title));return d;}
+reasonNames.collection_noise='采集阶段内容排除';
 function recordEvidence(record,j){
  const body=node('div');if(!j){body.append(node('p','此记录没有保存的判别结果，请核查分析完整性。'));return body;}
  body.append(node('p',j.reason));
+ if(j.collection_screening&&j.collection_screening.role!=='unclassified'){const s=j.collection_screening,d=disclosure(`${s.stage==='analysis_recheck'?'历史资料内容补检':'采集内容筛查'}：${s.label} · ${s.exclude?'已隔离，判为非机会':'保留具体业务求助'}`);for(const e of s.signals)d.append(node('p',`${e.origin==='title'?'标题':'正文'}[${e.start},${e.end})：${e.text}`));d.append(node('p','完整记录保留于清洗记录；隔离项不参与主题聚类和价值排序。'));body.append(d);}
  try{const url=new URL(record.url);if(['https:','http:'].includes(url.protocol))body.append(link('查看公开来源',url.href));}catch{}
  if(j.score_detail){const s=disclosure(`评分依据：${j.score_kind}；硬条件完整性 ${j.rule_completeness}`);for(const [key,f] of Object.entries(j.score_detail.components)){
   s.append(node('p',`${factorNames[key]??key}：强度 ${f.value} × 权重 ${f.weight} = ${f.contribution}；${f.reason}`));
@@ -76,6 +78,7 @@ function evaluationDetails(result){
 function report(result,base){
  const box=$('result');box.replaceChildren(node('h2','分析结论'),node('p',`已处理 ${result.record_count} 条记录，识别 ${result.candidate_count} 条候选机会，归纳为 ${result.clusters.length} 个主题。`));const cards=node('div');cards.className='cards';for(const [title,value] of [['采集记录',result.record_count],['候选机会',result.candidate_count],['机会主题',result.clusters.length]]){const c=node('div');c.className='stat';c.append(node('strong',String(value)),node('span',title));cards.append(c);}box.append(cards);
  box.append(node('p','机会证据分衡量记录的条件匹配程度；主题价值分按来源覆盖和记录规模排序。'));
+ const quarantined=Object.values(result.judgments).filter(j=>j.collection_screening?.exclude).length;if(quarantined)box.append(node('p',`内容筛查隔离 ${quarantined} 条招聘、求职或推广记录，均已判为非机会；完整记录保留在 result1、result2。`));
  const dependence=result.evaluation.value_diagnostics?.source_removal;
  if(dependence?.themes?.length){const single=dependence.themes.filter(t=>t.single_platform).length;if(single)box.append(node('p',`来源依赖提示：${single}/${dependence.themes.length}个主题来自单一平台。可在“质量评价与方法”中查看来源分布与移除来源后的变化。`));}
  if(result.evaluation.value_diagnostics?.all_scores_equal)box.append(node('p','本次主题价值分相同，可结合原文证据和业务方向选择优先主题。'));
