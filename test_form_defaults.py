@@ -16,7 +16,7 @@ def test_default_numeric_inputs_satisfy_html_constraints():
                 self.fields.append(values)
 
     parser = Inputs()
-    parser.feed(Path(__file__).with_name('index.html').read_text(encoding='utf-8'))
+    parser.feed(Path(__file__).with_name('local.html').read_text(encoding='utf-8'))
     assert len(parser.fields) >= 4
     for field in parser.fields:
         value = Decimal(field['value'])

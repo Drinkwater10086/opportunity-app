@@ -183,3 +183,40 @@ def test_numeric_quantity_or_decimal_is_not_bare_dependency():
     assert judge('Our team needs 20 meeting reports using a Whisper AI model API.')['opportunity']==1
     assert judge('Our team needs 20.5 hours of meeting transcription using a Whisper AI model API.')['opportunity']==1
     assert judge('Needs #18. Our team needs AI meeting transcription using a Whisper API.')['opportunity']==1
+
+
+@pytest.mark.parametrize('title,prefix',[
+    ('Show HN: Meeting tool','I built this tool. '),
+    ('Show HN: Meeting tool',"I would love feedback. "),
+    ('A new meeting tool','I am the founder. Key features: '),
+    ('Meeting API introduction','An AI meeting API helps automate reports. The system can generate summaries. '),
+])
+def test_solution_showcase_is_not_automatically_an_unmet_need(title,prefix):
+    text=prefix+'Our team needs AI meeting transcription using a Whisper model API.'
+    result=judge(text,title)
+    assert result['opportunity']==0 and 'solution_showcase' in result['failed_checks']
+    assert result['content_context']['showcase']['exclude']
+    assert result['confidence']<=.2
+
+
+def test_showcase_with_specific_unresolved_question_or_unrelated_comment_survives():
+    text='I built a meeting tool. Our team cannot transcribe noisy meetings. How can we improve our Whisper AI model API? We need meeting transcription.'
+    result=judge(text,'Show HN: Meeting tool')
+    assert result['opportunity']==1
+    assert result['content_context']['showcase']['user_request_exception']
+    # A comment under a launch must not inherit the author's promotional role.
+    text='Our team needs AI meeting transcription using a Whisper model API.'
+    assert judge(text,'Show HN: Someone else built a tool')['opportunity']==1
+    # Product words inside a quoted history are not fresh role cues.
+    assert judge('> I built a tool. Key features: AI.\n\n'+text,'Show HN: Meeting tool')['opportunity']==1
+
+
+def test_job_seeking_thread_does_not_supply_application_demand():
+    profile='Good fit if you need meeting transcription using a Whisper AI model API for your team.'
+    assert judge(profile,'Backend developer profile')['opportunity']==1
+    result=judge(profile,'Ask HN: Who wants to be hired? (November 2026)')
+    assert not result['opportunity'] and result['content_context']['job_posting']['exclude']
+    assert result['content_context']['job_posting']['seeking_thread']
+    request='Our team cannot screen all applications. We need AI to classify resumes using an NLP model API.'
+    result=judge(request,'Ask HN: Who wants to be hired?')
+    assert not result['content_context']['job_posting']['exclude']

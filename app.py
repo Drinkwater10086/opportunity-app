@@ -298,6 +298,15 @@ def evidence(batch_id: str):
                     media_type='application/json', headers={'Content-Disposition': 'attachment; filename="evidence.json"'})
 
 
+@app.get('/api/batches/{batch_id}/collection-evidence.json')
+def collection_evidence(batch_id: str):
+    batch, records = get_records(batch_id)
+    with connect() as db:
+        source_runs = [dict(row) for row in db.execute('SELECT * FROM source_runs WHERE batch_id=?', (batch_id,))]
+    return Response(json.dumps({'batch':batch,'records':records,'sources':source_runs},ensure_ascii=False,indent=2),
+                    media_type='application/json',headers={'Content-Disposition':'attachment; filename="collection-evidence.json"'})
+
+
 class ModelConfig(BaseModel):
     provider: Literal['deepseek', 'bigmodel'] = 'deepseek'
     api_key: str = Field(min_length=10, max_length=300)
@@ -1088,3 +1097,10 @@ def pair_review(batch_id: str, body: PairReview, request: Request):
 
 # Offline research pipeline with separate, versioned experiment history.
 local_routes.install(app, connect, get_records, require_usable_batch, ROOT, sources, csv_download)
+
+# Retain historical implementation for audit, but do not register any external
+# generative-model invocation, configuration or unlock route in the running app.
+_RETIRED_MODEL_PATHS={'/api/config','/api/ai-unlock',
+                      '/api/batches/{batch_id}/analyze','/api/batches/{batch_id}/stability-run'}
+_RETIRED_MODEL_ROUTES=[route for route in app.router.routes if getattr(route,'path',None) in _RETIRED_MODEL_PATHS]
+app.router.routes[:]=[route for route in app.router.routes if route not in _RETIRED_MODEL_ROUTES]

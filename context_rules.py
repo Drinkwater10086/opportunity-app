@@ -1,7 +1,7 @@
 """Bounded lexical negation and content-intent rules; not full language understanding."""
 import re
 
-VERSION='negation-and-tutorial-v5'
+VERSION='negation-and-content-role-v6'
 DEPENDENCY_REFERENCE=re.compile(
     r'\s+(?:(?:issues?|PR)\s*)?#?\d+(?:[ \t]*(?:[,/&]|and)[ \t]*#?\d+)*(?:[ \t]*\(\s*#\d+\s*\))?'
     r'(?=[ \t]*(?:\r?\n|[.!?](?=\s|$)|$|In parts\s*:))',re.I)
@@ -66,8 +66,29 @@ def job_posting_status(title,text):
     scanner=re.search(r'\b(?:scan result|job posting|job listing)\b|招聘信息|职位信息',title,re.I)
     user_task=PERSONAL_PROBLEM.search(text) or USER_PROCESSING_TASK.search(text)
     hiring=bool(cues['position'] and (cues['application'] or cues['listing'] or scanner))
-    return {'exclude':hiring and not bool(user_task),'signals':cues,'title_cue':span(scanner),
+    seeking_thread=re.search(r'^\s*Ask HN:\s*Who wants to be hired\??',title,re.I)
+    return {'exclude':bool((hiring or seeking_thread) and not user_task),'signals':cues,'title_cue':span(scanner),
+            'seeking_thread':span(seeking_thread),
             'user_task':span(user_task),'note':'结构化招聘线索用于排除岗位广告；用户招聘业务处理需求不一概排除，词法规则仍可能误判'}
+
+
+def showcase_status(title,text):
+    """A solution introduction is not automatically an unmet user request."""
+    title_cue=re.search(r'^\s*Show HN\s*:',title,re.I)
+    author=re.search(r"\b(?:I|we)[ \t]{1,8}(?:built|created|launched)\b|\b(?:I am|I'm|I’m|we are)[ \t]{1,8}(?:the[ \t]{1,8})?(?:founder|creator)\b",text,re.I)
+    features=re.search(r'\b(?:main features|key features|what it does|what you can build)\s*:',text,re.I)
+    mechanism=re.search(r'\b(?:an?|the|our)\s+[^.!?\n]{0,80}\bAPI\s+(?:helps|enables|allows|automates)\b',text,re.I)
+    capability=re.search(r'\b(?:the\s+)?(?:system|tool|API|platform)\s+can\s+(?:detect|extract|classify|identify|generate)\b',text,re.I)
+    feedback=re.search(r"\b(?:I'd|I’d|I would)\s+love\b[^.!?\n]{0,60}\bfeedback\b",text,re.I)
+    question=re.search(r'\b(?:how (?:can|do|should) (?:I|we)|can (?:anyone|someone) help|does anyone know|help me)\b|求助|如何',title+'\n'+text,re.I)
+    problem=PERSONAL_PROBLEM.search(text) or USER_PROCESSING_TASK.search(text)
+    exception=bool(question and problem)
+    showcase=bool((title_cue and (author or features or feedback)) or (author and features) or (mechanism and capability))
+    return {'exclude':showcase and not exception,'role':'solution_showcase' if showcase else 'unclassified',
+            'title_cue':span(title_cue),'author_cue':span(author),'features_cue':span(features),
+            'mechanism_cue':span(mechanism),'capability_cue':span(capability),
+            'feedback_cue':span(feedback),'personal_problem':span(problem),'user_request_exception':exception,
+            'note':'产品作者介绍、功能展示和泛反馈不自动作为未解决需求；含第一人称困难及明确求助时保留例外。词法角色推断不是真值，可能漏判混合内容。'}
 
 
 def compilation_status(title,text):

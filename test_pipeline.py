@@ -37,10 +37,19 @@ def model_fixture(key, prompt, max_tokens):
 
 @pytest.fixture
 def client():
+    # Archived mocked-provider regressions only. Production does not register
+    # these routes; current public behavior is tested in test_program_only.py.
+    current_routes=list(app.app.router.routes)
+    app.app.router.routes.extend(app._RETIRED_MODEL_ROUTES)
+    app.app.openapi_schema=None
     with tempfile.TemporaryDirectory() as tmp, patch.object(app, 'DATA', Path(tmp)), patch.object(app, 'MODEL_KEY', 'synthetic-key-not-real'), patch.object(app.sources, 'fetch', side_effect=source_fixture):
-        with TestClient(app.app) as c:
-            login(c)
-            yield c
+        try:
+            with TestClient(app.app) as c:
+                login(c)
+                yield c
+        finally:
+            app.app.router.routes[:]=current_routes
+            app.app.openapi_schema=None
 
 
 def collect(c):
