@@ -41,8 +41,7 @@ def replay(document,direction=None,allow_code_change=False):
     records=saved.get('input_records')
     if not isinstance(records,list) or not records or not all(isinstance(r,dict) and isinstance(r.get('id'),str) and isinstance(r.get('content'),str) for r in records):
         raise ValueError('缺少完整输入记录')
-    if len(records)>local_analysis.MAX_RECORDS or sum(len(r['content']) for r in records)>local_analysis.MAX_CHARACTERS:
-        raise ValueError('输入超出本地分析保护范围，不截断重放')
+    local_analysis.validate_input_size(records)
     ids=[r['id'] for r in records]
     if len(set(ids))!=len(ids):raise ValueError('记录编号重复')
     records=sorted(records,key=lambda r:r['id'])

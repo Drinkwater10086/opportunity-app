@@ -34,8 +34,16 @@ from analysis_engine import FUNCTIONS, INDUSTRIES, rank_clusters
 VERSION = 'local-rules-v20-business-evidence'
 SEED = 42
 MAX_RECORDS = 5000
-MAX_CHARACTERS = 20_000_000
+MAX_CHARACTERS = 50_000_000
 MAX_CANDIDATES = 2000
+
+
+def validate_input_size(records):
+    """Apply the same complete-input budget in HTTP requests and offline analysis."""
+    if len(records) > MAX_RECORDS or sum(len(r['content']) for r in records) > MAX_CHARACTERS:
+        raise ValueError(f'本地分析最多{MAX_RECORDS}条、正文合计{MAX_CHARACTERS:,}字符；未截断输入')
+
+
 FUNCTION_TERMS = dict(zip(FUNCTIONS, [
     '图像识别,图像检测,image recognition,object detection,ocr',
     '语义分析,意图识别,sentiment,intent classification,text classification',
@@ -473,8 +481,7 @@ def screening_flow(judgments,threshold):
 
 def analyze(batch, records, config, source_count):
     records = sorted(records, key=lambda r: r['id'])
-    if len(records) > MAX_RECORDS or sum(len(r['content']) for r in records) > MAX_CHARACTERS:
-        raise ValueError('超出本地保护范围：最多5000条、合计2000万字符；未截断数据')
+    validate_input_size(records)
     judgments = {r['id']: judge(r, batch['direction'], config) for r in records}
     positives = [r for r in records if judgments[r['id']]['opportunity']]
     if len(positives) > MAX_CANDIDATES:

@@ -147,8 +147,10 @@ def install(app, connect, get_records, require_usable_batch, root, sources, csv_
             raise HTTPException(409,'本地E5模型未准备；请先运行setup_semantic_model.py，不会自动下载或换用其他算法')
         if batch['status'] != 'collected' or not records:
             raise HTTPException(409, '请先完成采集；部分失败批次应先复制完整成功来源')
-        if len(records) > local_analysis.MAX_RECORDS or sum(len(r['content']) for r in records) > local_analysis.MAX_CHARACTERS:
-            raise HTTPException(413, '本地分析最多5000条、合计2000万字符；未截断输入')
+        try:
+            local_analysis.validate_input_size(records)
+        except ValueError as error:
+            raise HTTPException(413, str(error)) from error
         with connect() as db:
             row = db.execute('SELECT sources FROM batch_options WHERE batch_id=?', (batch_id,)).fetchone()
         selected = json.loads(row[0]) if row else []
