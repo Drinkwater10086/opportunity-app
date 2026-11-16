@@ -6,8 +6,10 @@ import re
 import threading
 import time
 import hashlib
+import math
 import requests
 import source_policy
+import github_access
 
 NAMES = {'github': 'GitHub', 'github_issues': 'GitHub', 'stackoverflow': 'Stack Overflow',
          'hackernews': 'Hacker News', 'superuser': 'Super User', 'workplace': 'The Workplace',
@@ -129,7 +131,7 @@ def fetch(source, query, limit, days, window_end=None):
     provider = provider_for(source)
     with _guard:
         remaining = _cooldown.get(provider, 0) - time.monotonic()
-    if remaining > 30:
+    if remaining > 30 and provider != 'github':
         raise ValueError(f'{NAMES[source]} 请求冷却中，请约 {int(remaining)+1} 秒后重试')
     records, pages, seen = [], [], set()
     terms = queries(query)
@@ -174,6 +176,60 @@ def fetch(source, query, limit, days, window_end=None):
                      'scope': f'每组检索词每来源最多{limit}条，跨检索词按URL去重；不代表全网'}
 
 
+def _reserve_slot(provider, name, interval, deadline):
+    while True:
+        with _guard:
+            remaining = _cooldown.get(provider, 0) - time.monotonic()
+            if remaining > max(0, deadline - time.monotonic()):
+                raise ValueError(f'{name} 请求冷却中，请约 {int(remaining)+1} 秒后重试')
+            if remaining <= 0:
+                _cooldown[provider] = time.monotonic() + interval
+                return
+        time.sleep(min(remaining, 30))
+
+
+def _github_request(endpoint, params, headers):
+    # Credentials are only sent to these fixed, public-search API endpoints.
+    if endpoint not in ('https://api.github.com/search/repositories', 'https://api.github.com/search/issues'):
+        raise ValueError('不支持的 GitHub 搜索接口')
+    token, mode = github_access.credentials()
+    if token:
+        headers = {**headers, 'Authorization': 'Bearer ' + token}
+    headers = {**headers, 'Accept': 'application/vnd.github+json'}
+    deadline = time.monotonic() + 65
+    for attempt in range(3):
+        _reserve_slot('github', 'GitHub', 3 if token else 7, deadline)
+        response = requests.get(endpoint, params=params, headers=headers, timeout=30, allow_redirects=False)
+        if response.status_code == 401:
+            raise ValueError('GitHub 登录凭据已失效；请在后端主机重新登录 GitHub 后重试')
+        if response.status_code in (403, 429):
+            delay = github_access.rate_delay(response, attempt)
+            if delay is None:
+                raise ValueError('GitHub 拒绝搜索访问；请检查登录凭据权限或平台访问策略')
+            with _guard:
+                _cooldown['github'] = max(_cooldown.get('github', 0), time.monotonic() + delay)
+            if attempt == 2 or delay > max(0, deadline - time.monotonic()):
+                hint = '；可在后端主机登录 GitHub 提高搜索额度' if not token else ''
+                raise ValueError(f'GitHub 搜索限流，请约 {int(delay)+1} 秒后重试{hint}')
+            continue
+        if 300 <= response.status_code < 400:
+            raise ValueError('GitHub 搜索接口返回意外跳转，已停止请求')
+        response.raise_for_status()
+        rate = github_access.response_headers(response)
+        if rate.get('X-RateLimit-Remaining') == '0':
+            try:
+                delay = max(0, float(rate['X-RateLimit-Reset']) - time.time()) + 1
+                if not math.isfinite(delay):
+                    raise ValueError('invalid rate reset')
+                with _guard:
+                    _cooldown['github'] = max(_cooldown.get('github', 0), time.monotonic() + delay)
+            except (KeyError, TypeError, ValueError):
+                pass
+        return response, {'authentication': mode, 'request_attempts': attempt + 1,
+                          'search_rate_remaining': rate.get('X-RateLimit-Remaining'),
+                          'search_rate_reset': rate.get('X-RateLimit-Reset')}
+
+
 def fetch_page(source, query, limit, days, page=1, window_end=None):
     """One public search page, with shared provider pacing."""
     retrieved_at = datetime.now(timezone.utc)
@@ -185,17 +241,10 @@ def fetch_page(source, query, limit, days, page=1, window_end=None):
     headers = {'User-Agent': 'AI-Opportunity-Research-Prototype', 'Accept': 'application/json'}
     # Reserve cooldown before requesting; never bypass provider backoff.
     provider = provider_for(source)
-    while True:
-        with _guard:
-            remaining = _cooldown.get(provider, 0) - time.monotonic()
-            if remaining > 30:
-                raise ValueError(f'{NAMES[source]} 请求冷却中，请约 {int(remaining)+1} 秒后重试')
-            if remaining <= 0:
-                _cooldown[provider] = time.monotonic() + (7 if provider == 'github' else 1)
-                break
-        time.sleep(min(remaining, 30))
+    if provider != 'github':
+        _reserve_slot(provider, NAMES[source], 1, time.monotonic() + 30)
     if source == 'github':
-        params = {'q': f'{query} pushed:{since.strftime("%Y-%m-%dT%H:%M:%SZ")}..{now.strftime("%Y-%m-%dT%H:%M:%SZ")} archived:false fork:false',
+        params = {'q': f'{query} is:public pushed:{since.strftime("%Y-%m-%dT%H:%M:%SZ")}..{now.strftime("%Y-%m-%dT%H:%M:%SZ")} archived:false fork:false',
                   'sort': 'stars', 'order': 'desc', 'per_page': limit, 'page': page}
         headers['X-GitHub-Api-Version'] = '2022-11-28'
         endpoint = 'https://api.github.com/search/repositories'
@@ -214,7 +263,11 @@ def fetch_page(source, query, limit, days, page=1, window_end=None):
                   'fromdate': int(since.timestamp()), 'todate': int(now.timestamp()),
                   'sort': 'votes', 'order': 'desc', 'filter': 'withbody'}
         endpoint = 'https://api.stackexchange.com/2.3/search/advanced'
-    response = requests.get(endpoint, params=params, headers=headers, timeout=30)
+    access_meta = {}
+    if provider == 'github':
+        response, access_meta = _github_request(endpoint, params, headers)
+    else:
+        response = requests.get(endpoint, params=params, headers=headers, timeout=30)
     retrieved_at = datetime.now(timezone.utc)
     if response.status_code in (403, 429):
         with _guard:
@@ -254,6 +307,9 @@ def fetch_page(source, query, limit, days, page=1, window_end=None):
     records = []
     invalid_date_count = outside_window_count = 0
     for item in items:
+        if provider == 'github' and (item.get('private') is True or
+                isinstance(item.get('repository'), dict) and item['repository'].get('private') is True):
+            raise ValueError('GitHub 返回非公开记录，已停止该页采集')
         if source == 'github_issues' and 'pull_request' in item:
             continue
         try:
@@ -315,7 +371,7 @@ def fetch_page(source, query, limit, days, page=1, window_end=None):
                                          and item['content_license'].strip() else '接口未提供内容许可版本，请核对原帖'),
                                 provenance={'body_available': bool(raw_text.strip()),
                                             'body_method': '公开问答正文' if raw_text.strip() else '仅问题标题，接口未提供正文'}))
-    return records, {**({'search_scope':issue_scope} if source=='github_issues' else {}),
+    return records, {**access_meta, **({'search_scope':issue_scope} if source=='github_issues' else {}),
                      'endpoint': endpoint, 'params': params, 'retrieved_at': retrieved_at.isoformat(),
                      'incomplete_results': payload.get('incomplete_results'),
                      'invalid_date_count': invalid_date_count, 'outside_window_count': outside_window_count,

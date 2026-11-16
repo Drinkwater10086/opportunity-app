@@ -100,3 +100,10 @@ InfoQ使用https://www.infoq.cn/feed.xml，robots的/feed/禁止项不匹配/fee
 阿里云开发者社区找到适用社区协议2.8自动化限制，掘金找到6.1站外整理展示限制，DataFountain找到复制传播需许可条件；已更新目录状态，不能继续统一写成“尚未核实接口”。CSDN官方博客声明的RSS本轮200但零字节，仍未接入。36氪仍是验证HTML；机器之心RSS需走官方申请开通，未取得地址；其余核验情况与条件均公开列明。没有使用Cookie、逆向接口、第三方镜像、验证码破解。
 
 本轮网站实测批次B70964DBBC8F9：InfoQ中国6条、量子位2条，两源success；实验LBD4B4712228D485B完成，8条记录、0候选，离线input_verified与same_outputs均true。完整回归303项通过，有一项既有AnyIO弃用警告。浏览器已看到两个新选项、来源计数及原文列表；公网目录实测20项/8项enabled。测试与重放仅验证实现及一致性，不证明需求判别准确率。
+## GitHub搜索连接
+
+GitHub项目简介和Issues共享搜索节奏，复用后端主机现有Git凭据管理器登录；也支持服务器环境变量`OPPORTUNITY_GITHUB_TOKEN`。默认无交互读取现有登录，失败时使用匿名搜索，不发起登录弹窗。可设置`OPPORTUNITY_GITHUB_USE_GIT_CREDENTIALS=0`关闭复用。
+
+请求固定发往官方`api.github.com/search/repositories`与`search/issues`，禁止跟随重定向，查询始终限定`is:public`，响应中的非公开记录会被拒绝。凭据只在后端内存和官方请求头中使用；页面元数据仅记录认证方式、尝试次数与额度信息。
+
+遵守`Retry-After`及`X-RateLimit-Reset`，主机内两种GitHub搜索共享冷却，认证搜索至少间隔3秒，匿名搜索至少7秒。每页最多3次请求，合计冷却等待预算65秒；超过预算保留之前成功的页面。401与非限流403分别提示登录失效和权限问题，避免无效重试。依据：[GitHub REST接口使用建议](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api)。
