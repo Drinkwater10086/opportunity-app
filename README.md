@@ -2,6 +2,8 @@
 
 基于 FastAPI 的本地数据采集和 AI 机会分析原型。
 
+在线测试入口：[GitHub Pages](https://drinkwater10086.github.io/opportunity-app/)。Pages发布仓库`docs/`入口页，按钮连接项目主机的临时HTTPS通道；主机/隧道离线时不能采集和分析。源码、文档和入口页均用Git提交及推送，尚在验证的代码不会冒充已部署版本。
+
 ## 本机运行
 
 需要 Python 3.12。在项目目录运行：
