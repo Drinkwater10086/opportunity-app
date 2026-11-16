@@ -27,6 +27,7 @@ import analysis_engine as engine
 import auth
 import automatic_evaluation
 import local_routes
+import source_catalog
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / 'data'
@@ -111,7 +112,7 @@ class BatchInput(BaseModel):
     query: str = Field(min_length=2, max_length=1300)
     limit: int = Field(default=100, ge=1, le=500)
     days: int = Field(default=365, ge=1, le=730)
-    sources: list[Literal['github', 'github_issues', 'stackoverflow', 'hackernews', 'superuser', 'workplace', 'n8n', 'make', 'nodered', 'v2ex', 'arxiv']] = Field(default=['github'], min_length=1, max_length=11)
+    sources: list[Literal['github', 'github_issues', 'stackoverflow', 'hackernews', 'superuser', 'workplace', 'n8n', 'make', 'nodered', 'v2ex', 'arxiv', 'ithome', 'kaggle', 'producthunt']] = Field(default=['github'], min_length=1, max_length=14)
 
 
 def clean(text):
@@ -206,6 +207,11 @@ def batches():
     with connect() as db:
         return [dict(row) for row in db.execute('''SELECT b.*, (SELECT COUNT(*) FROM records r
               WHERE r.batch_id=b.id) AS count FROM batches b ORDER BY created_at DESC''')]
+
+
+@app.get('/api/source-catalog')
+def catalog():
+    return source_catalog.report()
 
 
 @app.post('/api/batches', status_code=202)
