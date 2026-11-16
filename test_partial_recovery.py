@@ -1,8 +1,7 @@
 """Recovery uses only unambiguously successful sources and preserves lineage."""
 import json
 from unittest.mock import patch
-from test_pipeline import client, source_fixture, model_fixture
-import analysis_engine as engine
+from test_pipeline import client, source_fixture
 import app
 
 
@@ -34,9 +33,9 @@ def test_recovery_excludes_ambiguous_website_and_preserves_origin(client):
     meta=json.loads(after['sources'][0]['metadata'])
     assert meta['recovered_from']==old and 'github' in meta['excluded_sources']
     assert len(client.get('/api/batches/'+old).json()['records'])==2
-    with patch.object(engine,'call_model',side_effect=model_fixture):
-        assert client.post(f'/api/batches/{new}/analyze',json={}).status_code==202
-    assert app.analysis_state(new)['status']=='complete'
+    response=client.post(f'/api/batches/{new}/local-runs',json={})
+    assert response.status_code==202
+    assert client.get(f"/api/batches/{new}/local-runs/{response.json()['id']}").json()['status']=='complete'
 
 
 def test_recovery_refuses_if_no_unambiguously_usable_data(client):

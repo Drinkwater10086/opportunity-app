@@ -28,6 +28,6 @@ def test_initial_draft_is_complete_explicitly_hypothetical_and_deterministic():
     assert all(plan.model_dump().values())
     assert draft['origin']=='program_initial_draft'
     assert 'S1原文线索' in plan.target_users and 'We need email extraction.' in plan.pain_points
-    assert '假设' in plan.schedule and '承诺' in plan.schedule
-    assert '尚未实测' in plan.resources and '尚未宣称通过' in plan.validation
+    assert '估算' in plan.schedule and '实际工期' in plan.schedule
+    assert '尚未实测' in plan.resources and '验收状态：待执行' in plan.validation
     assert 'S1' in draft['sample_ids']

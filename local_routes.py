@@ -1,4 +1,4 @@
-"""Separate offline experiment history; legacy model results are never overwritten."""
+"""Versioned program-analysis runs, evidence exports and planning revisions."""
 import hashlib
 import json
 import threading
@@ -51,7 +51,7 @@ def init(db):
         id TEXT PRIMARY KEY, batch_id TEXT NOT NULL REFERENCES batches(id),
         created_at TEXT NOT NULL, status TEXT NOT NULL, config TEXT NOT NULL,
         result TEXT NOT NULL DEFAULT '{}', error TEXT NOT NULL DEFAULT '')''')
-    db.execute("UPDATE local_runs SET status='failed',error='服务重启导致中断，请创建新的本地实验' WHERE status IN ('queued','running')")
+    db.execute("UPDATE local_runs SET status='failed',error='服务重启导致中断，请创建新的分析记录' WHERE status IN ('queued','running')")
     db.execute('''CREATE TABLE IF NOT EXISTS local_plans (
         id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES local_runs(id),cluster_id TEXT NOT NULL,
         created_at TEXT NOT NULL,author TEXT NOT NULL,plan TEXT NOT NULL)''')
@@ -63,7 +63,7 @@ def install(app, connect, get_records, require_usable_batch, root, sources, csv_
         with connect() as db:
             row = db.execute('SELECT * FROM local_runs WHERE batch_id=? AND id=?', (batch_id, run_id)).fetchone()
         if not row:
-            raise HTTPException(404, '本批次不存在该本地实验')
+            raise HTTPException(404, '本批次不存在该分析记录')
         item = dict(row)
         item['config'], item['result'] = json.loads(item['config']), json.loads(item['result'])
         return item
@@ -72,7 +72,7 @@ def install(app, connect, get_records, require_usable_batch, root, sources, csv_
         require_usable_batch(batch_id)
         row = read_run(batch_id, run_id)
         if row['status'] != 'complete':
-            raise HTTPException(409, '本地实验尚未完成')
+            raise HTTPException(409, '分析记录尚未完成')
         return row
 
     def worker(run_id, batch, records, config, source_count):

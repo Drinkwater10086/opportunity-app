@@ -1,6 +1,6 @@
 # 否定与内容类型边界实验
 
-本轮版本 `local-rules-v5-context-negation`，不调用外部生成式模型。
+本轮版本 `local-rules-v5-context-negation`。
 
 ## 处理方法
 

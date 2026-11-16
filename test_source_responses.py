@@ -95,4 +95,4 @@ def test_incomplete_page_is_saved_in_partial_batch_and_not_analyzed(client):
     assert data['batch']['status']=='partial' and len(data['records'])==1
     assert data['sources'][0]['status']=='partial'
     assert client.get(f'/api/batches/{bid}/result1.csv').status_code==200
-    assert client.post(f'/api/batches/{bid}/analyze',json={}).status_code==409
+    assert client.post(f'/api/batches/{bid}/local-runs',json={}).status_code==409

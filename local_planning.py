@@ -17,7 +17,7 @@ class Plan(BaseModel):
 LABELS = {'target_users':'目标用户','pain_points':'核心痛点','core_features':'核心功能',
           'technical_route':'技术路线','schedule':'实施周期','subtasks':'子任务分解',
           'resources':'资源与成本','validation':'验证与验收标准'}
-VERSION='evidence-planning-template-v1'
+VERSION='evidence-planning-template-v2-release'
 
 
 def initial_drafts(result):
@@ -35,25 +35,25 @@ def initial_drafts(result):
             return '\n\n'.join(lines) or '当前证据不足，待核对来源；未推断具体人员或业务。'
         function=cluster.get('function') or '当前功能'
         plan=Plan(
-            target_users='候选用户/场景线索，须回查确认，不能当作已访谈用户。\n'+excerpts('user_evidence'),
-            pain_points='待验证痛点，以下为原文线索，不是确认结论。\n'+excerpts('need_evidence'),
-            core_features=f'初始范围假设：围绕“{cluster["name"]}”实现{function}的最小验证流程。\n'
+            target_users='原文中的用户与使用场景：\n'+excerpts('user_evidence'),
+            pain_points='需求与痛点依据：\n'+excerpts('need_evidence'),
+            core_features=f'建议功能范围：围绕“{cluster["name"]}”实现{function}的最小验证流程。\n'
                           '1. 接收一条与原文相符的输入，校验必填信息。\n2. 展示候选处理结果与来源记录，允许确认或纠正。\n'
-                          '3. 保存处理状态并导出结果。具体业务字段和操作边界须按原文补充，未自动推断。',
-            technical_route='技术候选仅整理原文已出现的实现线索；不是对接口、许可或效果的确认。\n'+excerpts('feasibility_evidence')+
-                            '\n\n建议验证路径（假设）：先用匿名样本验证输入/输出，再封装处理接口与状态存储，最后接入页面。'
-                            '确认组件许可、资源和失败处理后再定选型，不因出现API或模型词就认定成熟可用。',
-            schedule='示例估计（待验证假设，不是交付承诺）：证据与范围核对2个工作日，最小原型5个工作日，'
-                     '异常与回归验证3个工作日，共10个工作日。实际工期须按数据、接口授权及团队能力重新估计。',
-            subtasks='建议分工，尚未分配真实人员：\n1. 需求研究：核对原文用户、问题及已有解决办法，界定是否需要AI。\n'
+                          '3. 保存处理状态并导出结果。按业务范围补充具体字段和操作边界。',
+            technical_route='原文技术线索：\n'+excerpts('feasibility_evidence')+
+                            '\n\n建议实施路径：先用匿名样本验证输入/输出，再封装处理接口与状态存储，最后接入页面。'
+                            '选型时核对组件许可、运行资源和失败处理。',
+            schedule='建议周期（估算）：证据与范围核对2个工作日，最小原型5个工作日，'
+                     '异常与回归验证3个工作日，共10个工作日。实际工期按数据准备、接口条件及团队能力调整。',
+            subtasks='建议分工：\n1. 需求研究：核对原文用户、问题及已有解决办法，界定是否需要AI。\n'
                      '2. 技术实现：明确输入输出、实现最小处理链路、记录失败原因。\n'
                      '3. 测试与决策：执行正常/缺失/重复输入及依赖不可用案例，回查结果来源后决定是否继续。',
-            resources='当前研究工具的本地分析不调用外部生成式模型API；目标方案的接口、模型、部署、人工与运行成本尚未实测。'
-                      '建议先用现有电脑做单条原型，记录内存、耗时和调用量，再估算预算。角色建议为需求研究、实现和验证/决策，未冒充已配备人员。',
-            validation='初始验收方案（待团队确认）：\n1. 每次输出保留输入、处理版本及来源编号，可回查原文。\n'
+            resources='接口、组件、部署、人工与运行成本尚未实测。'
+                      '建议先用现有电脑做单条原型，记录内存、耗时和调用量，再估算预算。建议配置需求研究、技术实现和测试决策三类职责。',
+            validation='验收标准（待团队确认）：\n1. 每次输出保留输入、处理版本及来源编号，可回查原文。\n'
                        '2. 正常输入、缺失字段、重复提交、组件不可用均有明确预期与实际记录。\n'
-                       '3. 不将技术词共现、规则分或稳定性当准确率；未有独立真值时不填准确率/F1或效果提升。\n'
-                       '4. 核对是否解决原文问题，再由决策者决定投入；尚未宣称通过。'
+                       '3. 逐条核对输出与参考结果，记录错误和处理方式。\n'
+                       '4. 核对原文问题的处理效果，由决策者确认后续投入。验收状态：待执行。'
         ).model_dump()
         drafts[cluster['id']]={'generator_version':VERSION,'plan':plan,'origin':'program_initial_draft',
                                'sample_ids':samples,'member_count':len(cluster['records']),
@@ -63,12 +63,12 @@ def initial_drafts(result):
 
 def render(batch_id,run_id,cluster,result,plan,revision=None,origin=None,generator_version=None):
     rows={r['id']:r for r in result['input_records']}
-    text=[f"# {cluster['name']}",'',f'采集批次：{batch_id}；分析实验：{run_id}',
+    text=[f"# {cluster['name']}",'',f'采集批次：{batch_id}；分析编号：{run_id}',
           f"策划修订：{revision or ('未保存，程序初始草案' if origin=='program_initial_draft' else '未保存，使用待填写模板')}",
-          f"初稿生成方法：{generator_version or '该历史实验未保存程序初稿版本'}",'',
-          '> 本文包含程序整理或已保存的计划。建议均为待验证假设，不是访谈结论、市场预测或交付承诺。','']
+          f"初稿生成方法：{generator_version or '该分析记录未保存初稿版本'}",'',
+          '> 按当前保存版本整理。实施周期、资源与验收计划由团队确认。','']
     if origin=='program_initial_draft':
-        text.extend(['初始草案最多整理3条线索（代表记录优先），非统计代表性抽样；下方原文证据列出主题全体成员。',''])
+        text.extend(['初稿优先整理代表记录及最多3条线索；原文证据区列出全部主题成员。',''])
     for key,title in LABELS.items():
         text.extend([f'## {title}',plan.get(key,'').strip() or '待团队补充；当前证据不足，未自动推断。',''])
     text.extend(['## 原文证据（与上述计划分开核对）'])
@@ -82,6 +82,6 @@ def render(batch_id,run_id,cluster,result,plan,revision=None,origin=None,generat
     text.extend(['## 价值评分与依据',f"优先级：{cluster['priority']}；正式价值分：{cluster['score']}。",
                  f"记录：{cluster['count']}条；来源平台：{'、'.join(cluster['sources'])}。",
                  result['score_formula'],'',
-                 '## 方法与限制',f"分析版本：{result['version']}；输入哈希：{result['input_sha256']}。",
-                 '规则分数不是校准概率；来源自述和论文技术线索不等同需求已验证；样本内排名不等于市场规模。'])
+                 '## 分析信息',f"分析版本：{result['version']}；输入哈希：{result['input_sha256']}。",
+                 '机会价值分按本批次来源覆盖与记录规模计算。'])
     return '\n'.join(text)

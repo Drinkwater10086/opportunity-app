@@ -97,6 +97,6 @@ Product Hunt核验更正：官方安装页介绍OAuth登录，但实际tools/lis
 
 InfoQ使用https://www.infoq.cn/feed.xml，robots的/feed/禁止项不匹配/feed.xml；仅订阅title/description。移除纯“点击查看原文”提示，未提供正文则保留空值及body_available=false，角色technical_context/news_headline，不用标题冒充需求证据。量子位只使用官网alternate声明的/feed及description，忽略content:encoded全文，不补抓正文。两源摘要有提供时角色为secondary_report/news_excerpt，未经独立核实。
 
-阿里云开发者社区找到适用社区协议2.8自动化限制，掘金找到6.1站外整理展示限制，DataFountain找到复制传播需许可条件；已更新目录状态，不能继续统一写成“尚未核实接口”。CSDN官方博客声明的RSS本轮200但零字节，仍未接入。36氪仍是验证HTML；机器之心RSS需走官方申请开通，未取得地址；其余核验情况与条件均公开列明。没有使用Cookie、逆向接口、第三方镜像、验证码破解或生成式模型。
+阿里云开发者社区找到适用社区协议2.8自动化限制，掘金找到6.1站外整理展示限制，DataFountain找到复制传播需许可条件；已更新目录状态，不能继续统一写成“尚未核实接口”。CSDN官方博客声明的RSS本轮200但零字节，仍未接入。36氪仍是验证HTML；机器之心RSS需走官方申请开通，未取得地址；其余核验情况与条件均公开列明。没有使用Cookie、逆向接口、第三方镜像、验证码破解。
 
 本轮网站实测批次B70964DBBC8F9：InfoQ中国6条、量子位2条，两源success；实验LBD4B4712228D485B完成，8条记录、0候选，离线input_verified与same_outputs均true。完整回归303项通过，有一项既有AnyIO弃用警告。浏览器已看到两个新选项、来源计数及原文列表；公网目录实测20项/8项enabled。测试与重放仅验证实现及一致性，不证明需求判别准确率。

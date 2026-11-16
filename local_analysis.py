@@ -27,7 +27,7 @@ from sklearn.preprocessing import normalize
 
 from analysis_engine import FUNCTIONS, INDUSTRIES, rank_clusters
 
-VERSION = 'local-rules-v18-markup-evidence'
+VERSION = 'local-rules-v19-program-release'
 SEED = 42
 MAX_RECORDS = 5000
 MAX_CHARACTERS = 20_000_000
@@ -448,7 +448,7 @@ def analyze(batch, records, config, source_count):
         representation = 'TF-IDF词面向量' if vector_method=='tfidf' else 'TF-IDF（候选少于8条，未执行LSA以避免极低维度过度合并）'
         if vector_method=='e5':
             vectors, embedding_metadata = local_embeddings.embed([judgments[r['id']]['analysis_text'] for r in positives])
-            representation = '本地multilingual-e5-small量化ONNX句向量（预训练语义特征）；非生成式分析'
+            representation = '本地multilingual-e5-small量化ONNX句向量（预训练语义特征）'
         elif vector_method=='lsa' and len(positives) >= 8 and dimensions >= 2:
             svd = TruncatedSVD(n_components=dimensions, random_state=SEED)
             vectors = normalize(svd.fit_transform(x))
@@ -524,7 +524,7 @@ def analyze(batch, records, config, source_count):
             'preprocessing_version': preprocessing.VERSION,
             'score_formula': '覆盖=100×簇内网站数/选定网站数；规模=100×log(1+簇记录数)/log(1+最大簇记录数)；近重复调整分仅作补充诊断，来源覆盖不等同独立证据；按配置权重归一化加权',
             'conclusion': f'{len(records)}条记录经规则筛选保留{len(positives)}条候选，形成{len(clusters)}个主题。'
-                          '候选及排序仅为样本内研究线索，未验证市场需求或分类准确率。',
+                          '可查看主题、来源证据和价值排序，并继续整理立项策划。',
             'rules': {'patterns': PATTERNS, 'functions': FUNCTION_TERMS, 'industries': INDUSTRY_TERMS,
                       'topic_scenarios':SCENARIO_TERMS,'topic_scene_min_support':'strict_majority',
                       'office_scope': OFFICE, 'ai_need_max_character_distance': 600}}

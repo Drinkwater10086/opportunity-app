@@ -121,7 +121,7 @@ def test_routes_no_key_isolation_exports_and_legacy_untouched(tmp_path):
         assert initial_plan['id'] is None
         assert initial_plan['origin']=='program_initial_draft'
         assert initial_plan['plan']['core_features']
-        assert '示例估计' in initial_plan['plan']['schedule']
+        assert '建议周期（估算）' in initial_plan['plan']['schedule']
         assert run['result']['proposal_drafts']['C1']['plan']==initial_plan['plan']
         saved=client.post(plan_path,json={'schedule':'团队估计：两周，尚未验证','resources':'仅本机测试'}).json()
         assert saved['saved']
@@ -149,7 +149,7 @@ def test_routes_no_key_isolation_exports_and_legacy_untouched(tmp_path):
         finally:
             RUN_LOCK.release()
         with app.connect() as db:
-            assert db.execute('SELECT COUNT(*) FROM model_calls').fetchone()[0] == 0
+            assert db.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='model_calls'").fetchone()[0] == 0
             assert db.execute("SELECT config FROM analyses WHERE batch_id='B1'").fetchone()[0] == '{}'
             assert db.execute('SELECT COUNT(*) FROM judgments').fetchone()[0] == 0
             assert db.execute('SELECT COUNT(*) FROM local_plans').fetchone()[0] == 2
