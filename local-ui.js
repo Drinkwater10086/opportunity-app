@@ -58,11 +58,22 @@ function evaluationDetails(result){
  }
  if(result.evaluation.semantic_threshold_grid){const grid=disclosure('E5固定阈值网格（未自动择优）');for(const e of result.evaluation.semantic_threshold_grid)grid.append(node('p',`距离${e.distance_threshold}：${e.cluster_count}簇，单例${e.singleton_count}，最大簇${(100*e.largest_cluster_fraction).toFixed(1)}%`));root.append(grid);}
  if(result.evaluation.value_diagnostics){const v=result.evaluation.value_diagnostics,d=disclosure('价值权重敏感性（不改变正式排名）');d.append(node('p',v.note));for(const row of v.weight_grid)d.append(node('p',`来源覆盖权重 ${(100*row.coverage_weight).toFixed(1)}%，记录规模 ${(100*row.scale_weight).toFixed(1)}%；最高同分主题：${row.top_ids.join('、')}`));root.append(d);}
+ const removal=result.evaluation.value_diagnostics?.source_removal;
+ if(removal){const d=disclosure('逐个移除来源：主题与排名依赖');d.append(node('p',removal.note));
+  if(removal.status==='single_source')d.append(node('p','候选全部来自同一个平台；删除后没有候选，无法据此评价跨来源稳定性。'));
+  else if(removal.status==='no_candidates')d.append(node('p','本次没有候选主题，未计算来源依赖；不记作稳定或0分。'));
+  else if(removal.status!=='ok')d.append(node('p',removal.reason??'本次无法计算来源依赖。'));
+  if(removal.ranking_change_scenario_count!==null)d.append(node('p',`在${removal.comparable_scenario_count}个仍有至少2个主题的可比较情景中，${removal.ranking_change_scenario_count}个改变了主题间高低或同分关系；主题消失另列。`));
+  for(const t of removal.themes){const name=result.clusters.find(c=>c.id===t.id)?.name??t.id;d.append(node('p',`${t.id} ${name}：${t.single_platform?'仅单个平台支持':'多个平台有记录'}；最大平台占比 ${(100*t.dominant_source_share).toFixed(1)}%；${t.disappears_when_removing.length?'移除这些平台后主题消失：'+t.disappears_when_removing.join('、'):'移除任一单个平台后均有剩余记录'}；仍存在时最大名次下降 ${t.maximum_rank_drop??'无法计算'}。`));}
+  for(const row of removal.scenarios){const detail=disclosure(`删除 ${row.removed_source}：剩余${row.remaining_record_count}条候选`);detail.append(node('p',row.ranking_available?`最高同分主题：${row.top_ids.join('、')}；消失主题：${row.empty_theme_ids.join('、')||'无'}。`:'候选全部移除，无排名；不把缺失分数记为0。'));for(const t of row.themes)detail.append(node('p',`${t.id}：剩余${t.remaining_count}条；分数 ${t.score??'无'}；同分同名次 ${t.rank??'无'}；相对原同分名次变化 ${t.rank_change??'无'}。`));d.append(detail);}root.append(d);
+ }
  const sensitivity=disclosure('规则阈值、聚类敏感性与消融');for(const e of result.evaluation.threshold_sensitivity)sensitivity.append(node('p',`机会阈值${e.threshold}：${e.candidate_count}条候选`));for(const e of result.evaluation.sensitivity)sensitivity.append(node('p',`聚类距离${e.distance_threshold.toFixed(2)}：${e.cluster_count}簇，共同输入ARI ${e.ari===null?'样本不足':e.ari.toFixed(4)}`));for(const [key,count] of Object.entries(result.evaluation.ablation))sensitivity.append(node('p',`移除${reasonNames[key]??key}门槛：${count}条（保留原分数及阈值）`));root.append(sensitivity,node('p',result.evaluation.note),node('p',result.score_formula));return root;
 }
 function report(result,base){
  const box=$('result');box.replaceChildren(node('h2','分析结论'),node('p',result.conclusion));const cards=node('div');cards.className='cards';for(const [title,value] of [['采集记录',result.record_count],['候选机会',result.candidate_count],['机会主题',result.clusters.length]]){const c=node('div');c.className='stat';c.append(node('strong',String(value)),node('span',title));cards.append(c);}box.append(cards);
  box.append(node('p','机会证据分表示规则支持强度；主题价值分用于本批次相对排序，两者均不是准确率或市场规模。'));
+ const dependence=result.evaluation.value_diagnostics?.source_removal;
+ if(dependence?.themes?.length){const single=dependence.themes.filter(t=>t.single_platform).length;if(single)box.append(node('p',`来源依赖提示：${single}/${dependence.themes.length}个主题仅由一个平台支持，移除该平台后没有剩余记录；可在实验评价中展开“逐个移除来源”查看，不将它们称为跨来源验证的热点。`));}
  if(result.evaluation.value_diagnostics?.all_scores_equal)box.append(node('p','所有主题的正式价值分相同，当前两个评分维度无法区分优先价值；请结合原文证据决策，不将展示先后当作优劣。'));
  const downloads=node('div');downloads.className='toolbar';for(let n=1;n<=4;n++)downloads.append(link(`result${n}.csv`,base+`/result${n}.csv`));downloads.append(link('证据与实验参数',base+'/evidence.json'));box.append(downloads);
  if(result.direction_scope){const s=result.direction_scope,labels={explicit:'仅显式方向词',office_profile:'办公方向词典',industry_profile:'行业方向词典',literal:'原方向词，未扩展'},d=disclosure(`本次方向范围：${labels[s.mode]??s.mode}${s.profile?' / '+s.profile:''}`);d.append(node('p','配置词：'+s.configured_terms.join('、')),node('p','扩展词：'+(s.expanded_terms.join('、')||'无')),node('p',s.note));box.append(d);}

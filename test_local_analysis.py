@@ -1,6 +1,7 @@
 """Synthetic unit inputs only; never presented as collected competition data."""
 import csv
 import io
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -175,3 +176,22 @@ def test_failed_worker_releases_lock_and_preserves_error(tmp_path):
         run = client.get('/api/batches/B1/local-runs/'+rid).json()
         assert run['status']=='failed' and 'intentional' in run['error']
         assert not RUN_LOCK.locked()
+
+
+def test_result1_exports_original_platform_heat_from_saved_experiment_snapshot(tmp_path):
+    with patch.object(app,'DATA',tmp_path),TestClient(app.app) as client:
+        login_if_needed(client);seed('B1')
+        with app.connect() as db:
+            db.execute('INSERT INTO record_meta VALUES (?,?,?)',('B1','S00001',json.dumps({'heat':{'浏览数':123,'讨论数':0,'投票数':7}},ensure_ascii=False)))
+            db.execute('INSERT INTO record_meta VALUES (?,?,?)',('B1','S00002',json.dumps({'heat':{}})))
+        with patch('requests.sessions.Session.request',side_effect=AssertionError('network forbidden')):
+            rid=client.post('/api/batches/B1/local-runs',json={}).json()['id']
+        with app.connect() as db:
+            db.execute('UPDATE record_meta SET metadata=? WHERE batch_id=? AND record_id=?',(json.dumps({'heat':{'浏览数':999}}),'B1','S00001'))
+        response=client.get('/api/batches/B1/local-runs/'+rid+'/result1.csv')
+        assert response.status_code==200
+        rows=list(csv.DictReader(io.StringIO(response.content.decode('utf-8-sig'))))
+        assert json.loads(rows[0]['热度指标（原平台名称与数值）'])=={'浏览数':123,'讨论数':0,'投票数':7}
+        assert json.loads(rows[1]['热度指标（原平台名称与数值）'])=={}
+        assert rows[0]['采集时间']=='2026-11-14T00:00:00Z'
+        assert rows[0]['发布时间']==rows[0]['更新时间']==''

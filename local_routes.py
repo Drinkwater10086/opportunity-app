@@ -170,8 +170,10 @@ def install(app, connect, get_records, require_usable_batch, root, sources, csv_
     def export(batch_id: str, run_id: str, number: int):
         result = finished(batch_id, run_id)['result']
         if number == 1:
-            header = ['采集批次号','记录编号','来源网站','来源链接','内容','发布时间','星标数']
-            rows = [[batch_id,r['id'],r['source'],r['url'],r['content'],r['published_at'],r['stars']] for r in result['input_records']]
+            header = ['采集批次号','记录编号','来源网站','来源链接','内容','发布时间','星标数','热度指标（原平台名称与数值）','更新时间','采集时间']
+            rows = [[batch_id,r['id'],r['source'],r['url'],r['content'],r['published_at'],r['stars'],
+                     json.dumps(r.get('metadata',{}).get('heat',{}),ensure_ascii=False),r.get('updated_at'),r.get('collected_at')]
+                    for r in result['input_records']]
         elif number == 2:
             header = ['采集批次号','记录编号','是否构成机会','机会置信度','功能类别','所属行业']
             rows = [[batch_id,rid,j['opportunity'],j['confidence'],j['function'],j['industry']] for rid,j in result['judgments'].items()]

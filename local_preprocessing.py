@@ -1,7 +1,7 @@
 """Conservative, offset-preserving analysis views. Original records are immutable."""
 import re
 
-VERSION = 'structure-and-duplicate-v3-html-hidden'
+VERSION = 'structure-and-duplicate-v4-list-boundaries'
 EXCLUDED = re.compile(r'```[\s\S]*?(?:```|\Z)|~~~[\s\S]*?(?:~~~|\Z)|(?m:^[ \t]*>[^\n]*(?:\n|$))')
 HTML_HIDDEN=re.compile(r'<!--[\s\S]*?(?:-->|\Z)|'
                        r'<(?P<hidden>script|style|iframe|template)\b[^>]*>[\s\S]*?(?:</(?P=hidden)\s*>|\Z)',re.I)
@@ -38,8 +38,9 @@ def structure(text):
             if masked[i] not in '\r\n':masked[i]=' '
     view=''.join(masked)
     spans=[]
-    # Paragraph boundaries are never bridged. Long unpunctuated text is retained as one unit.
-    for paragraph in re.finditer(r'[^\n]+(?:\n(?![ \t]*\n)[^\n]+)*',view):
+    # Do not combine unrelated bullets/headings/Markdown table rows into one claim.
+    # Continuation lines within a list item remain together; offsets are unchanged.
+    for paragraph in re.finditer(r'[^\n]+(?:\n(?![ \t]*\n|[ \t]*(?:[-+*][ \t]+|\d+[.)、][ \t]+|#{1,6}[ \t]+|\|))[^\n]+)*',view):
         for sentence in re.finditer(r'.+?(?:[。！？!?]+|\.(?=\s|$)|$)',paragraph.group(),re.S):
             start,end=paragraph.start()+sentence.start(),paragraph.start()+sentence.end()
             while start<end and view[start].isspace():start+=1
@@ -60,7 +61,7 @@ def structure(text):
             'quality':{'original_characters':len(text),'analysis_characters':sum(not c.isspace() for c in view),
                        'excluded_characters':sum(s['end']-s['start'] for s in excluded),
                        'has_paragraph_boundaries':'\n' in text,
-                       'note':'保留完整输入；代码块、Markdown引用、HTML隐藏块/注释仅从判别视图等长屏蔽；超长单句全覆盖分片，历史已丢失段落无法恢复'}}
+                       'note':'保留完整输入；代码块、Markdown引用、HTML隐藏块/注释仅从判别视图等长屏蔽；不同列表项、标题和Markdown表格行不拼接；超长单句全覆盖分片，历史已丢失段落无法恢复'}}
 
 
 def windows(structured):

@@ -1,5 +1,6 @@
 """Adversarial fixtures are synthetic, never competition observations."""
 import numpy as np
+import pytest
 import local_preprocessing as prep
 import local_analysis as core
 from local_routes import LocalConfig
@@ -103,3 +104,21 @@ def test_duplicate_adjustment_preserves_cluster_members_and_raw_count():
     assert result['clusters'][0]['score']==result['clusters'][0]['score_before_duplicate_adjustment']
     assert 'duplicate_adjusted_score' in result['clusters'][0]
     assert result['evaluation']['structure_valid']
+
+
+@pytest.mark.parametrize('marker',['- ','* ','+ ','1. ','2) ','3、 ','## ','| '])
+def test_list_heading_and_table_boundaries_cannot_mix_unrelated_evidence(marker):
+    text=marker+'Our team needs better meeting reports.\n'+marker+'A benchmark uses a Whisper AI model API.'
+    assert judge(text)['opportunity']==0
+    for start,end,window in prep.windows(prep.structure(text)):
+        assert text[start:end]==window
+        assert not ('Our team' in window and 'benchmark' in window)
+
+
+def test_wrapped_lines_within_one_list_item_keep_complete_demand_and_offsets():
+    text='- Our team needs meeting transcription.\n  A Whisper AI model API could support this workflow.\n- Separate release notes.'
+    result=judge(text)
+    assert result['opportunity']==1
+    for span in result['evidence_spans'].values():
+        if span:assert text[span['start']:span['end']]==span['text']
+    assert 'Separate' not in result['selected_context']['text']

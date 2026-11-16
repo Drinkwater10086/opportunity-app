@@ -27,7 +27,7 @@ from sklearn.preprocessing import normalize
 
 from analysis_engine import FUNCTIONS, INDUSTRIES, rank_clusters
 
-VERSION = 'local-rules-v15-content-intent'
+VERSION = 'local-rules-v17-evidence-boundaries'
 SEED = 42
 MAX_RECORDS = 5000
 MAX_CHARACTERS = 20_000_000
@@ -278,7 +278,7 @@ def judge(record, direction, config):
         span=result['evidence_spans'][source]
         result[target]=span['text'] if span else ''
     result['selected_context']={'start':start,'end':end,'text':original[start:end],
-                                'method':'同段最多3个相邻句；上下文最长1200字符；超长单句全覆盖分片，无截断'}
+                                'method':'同结构单元最多3个相邻句；不跨列表项/标题/表格行；上下文最长1200字符；超长单句全覆盖分片，无截断'}
     result['analysis_text']=structured['text'][start:end]
     result['preprocessing']={k:v for k,v in structured.items() if k!='text'}
     result['evidence_sufficiency']={key:bool(result['evidence_spans'][key]) for key in ('need','context','ai','feasible')}
@@ -505,7 +505,7 @@ def analyze(batch, records, config, source_count):
         for index,cluster in enumerate(clusters,1):cluster['priority']=index
 
     members = [rid for c in clusters for rid in c['records']]
-    evaluation['value_diagnostics']=local_value.diagnostics(clusters,source_count,(config['coverage_weight'],config['scale_weight']))
+    evaluation['value_diagnostics']=local_value.diagnostics(clusters,source_count,(config['coverage_weight'],config['scale_weight']),positives)
     tie_sizes={cid:len(group['cluster_ids']) for group in evaluation['value_diagnostics']['tie_groups'] for cid in group['cluster_ids']}
     for c in clusters:c['same_score_count']=tie_sizes.get(c['id'],1)
     evaluation['structure_valid'] = len(members) == len(set(members)) and set(members) == {r['id'] for r in positives}
