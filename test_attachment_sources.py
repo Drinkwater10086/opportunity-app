@@ -66,7 +66,7 @@ def test_all_attachment_platforms_have_distinct_honest_catalog_status():
     import source_catalog
     report=source_catalog.report();entries=report['entries']
     assert len(entries)==len({row['id'] for row in entries})==20
-    assert {row['id'] for row in entries if row['status']=='enabled'}=={'github','stackoverflow','v2ex','ithome','kaggle','producthunt'}
+    assert {row['id'] for row in entries if row['status']=='enabled'}=={'github','stackoverflow','v2ex','ithome','kaggle','producthunt','infoq','qbitai'}
     assert all(row['note'] and row['evidence_url'].startswith('https://') for row in entries)
     assert next(row for row in entries if row['id']=='paperswithcode')['status']=='redirected'
 
@@ -107,3 +107,33 @@ def test_producthunt_transport_uses_only_read_tool_and_rejects_unstructured_outp
     assert body['method']=='tools/call' and body['params']['name']=='search_launches'
     assert 'Authorization' not in post.call_args.kwargs['headers']
     adapter._next.pop('producthunt',None)
+
+
+@pytest.mark.parametrize('key,url',[('infoq','https://www.infoq.cn/article/AbCd123?utm_source=rss'),('qbitai','https://www.qbitai.com/2026/11/123456.html')])
+def test_media_feeds_retain_only_declared_description(key,url):
+    payload=('<rss xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><item><title>AI meeting</title><link>'+url+'</link><description>&lt;p&gt;Short summary&lt;/p&gt;</description><content:encoded>FULL_ARTICLE_MUST_NOT_PERSIST</content:encoded><pubDate>Sun, 15 Nov 2026 12:00:00 GMT</pubDate></item></channel></rss>').encode()
+    with patch.object(adapter,'check_robots',return_value={'allowed':True}),patch.object(adapter,'get',return_value=(payload,200)) as get:
+        rows,meta=sources.fetch(key,'AI',20,30,window_end=NOW)
+    assert len(rows)==1 and rows[0]['raw_text']=='Short summary' and meta['complete']
+    assert 'FULL_ARTICLE_MUST_NOT_PERSIST' not in json.dumps(rows)
+    assert rows[0]['provenance']['evidence_role']=='secondary_report' and get.call_count==1
+    assert '?' not in rows[0]['url']
+
+
+def test_infoq_link_only_description_is_not_body_or_demand_evidence():
+    payload=('<rss><channel><item><title>Our team needs AI meeting transcription via Whisper model API</title><link>https://www.infoq.cn/article/example</link><description>&lt;div&gt;&lt;a href="https://www.infoq.cn/article/example"&gt;点击查看原文&gt;&lt;/a&gt;&lt;/div&gt;</description><pubDate>Sun, 15 Nov 2026 12:00:00 GMT</pubDate></item></channel></rss>').encode()
+    with patch.object(adapter,'check_robots',return_value={'allowed':True}),patch.object(adapter,'get',return_value=(payload,200)):
+        rows,meta=sources.fetch('infoq','AI',10,30,window_end=NOW)
+    row=rows[0]
+    assert row['raw_text']=='' and not row['provenance']['body_available']
+    assert row['provenance']['content_kind']=='news_headline' and row['provenance']['evidence_role']=='technical_context'
+    record={**row,'id':'S1','content':row['title'],'metadata':{'provenance':row['provenance']}}
+    assert not local_analysis.judge(record,'企业办公自动化',LocalConfig().model_dump())['opportunity']
+
+
+def test_feed_invalid_port_is_counted_without_losing_other_valid_entries():
+    item='<item><title>AI</title><link>{}</link><pubDate>Sun, 15 Nov 2026 12:00:00 GMT</pubDate></item>'
+    payload=('<rss><channel>'+item.format('https://www.infoq.cn:invalid/article/x')+item.format('https://www.infoq.cn/article/y')+'</channel></rss>').encode()
+    with patch.object(adapter,'check_robots',return_value={'allowed':True}),patch.object(adapter,'get',return_value=(payload,200)):
+        rows,meta=sources.fetch('infoq','AI',10,30,window_end=NOW)
+    assert len(rows)==1 and meta['invalid_count']==1 and not meta['complete']

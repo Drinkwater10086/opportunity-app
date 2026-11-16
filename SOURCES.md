@@ -59,7 +59,7 @@ GitHub Issue的JSON body是Markdown字符串，不再使用HTML转文本器处�
 
 ## 附件2逐项接入与实测（2026-11-16）
 
-按本地附件2.xlsx逐行核对，实际为20个平台。source_catalog.py保存全部条目、状态、范围及官方依据，GET /api/source-catalog及网页状态目录展示；目录不是适配器完成声明。当前附件内启用GitHub、Stack Overflow、V2EX、IT之家、Kaggle、Product Hunt；其余状态如下，不计作有效采集来源。
+按本地附件2.xlsx逐行核对，实际为20个平台。source_catalog.py保存全部条目、状态、范围及官方依据，GET /api/source-catalog及网页状态目录展示；目录不是适配器完成声明。当前附件内启用GitHub、Stack Overflow、V2EX、IT之家、Kaggle、Product Hunt、InfoQ中国、量子位；其余状态如下，不计作有效采集来源。
 
 新增IT之家采用[官方RSS说明](https://www.ithome.com/0/000/037.htm)及当前主页alternate链接提供的https://www.ithome.com/rss/。本机初检RSS200/XML、robots200且未禁止此路径。只保留订阅提供的标题/摘要，不补抓全文、评论和图片，标记secondary_report/news_excerpt；媒体转述未经独立核实，版权不因RSS开放就失效。
 
@@ -69,15 +69,17 @@ GitHub Issue的JSON body是Markdown字符串，不再使用HTML转文本器处�
 |---|---|
 | 哔哩哔哩 | [开放平台协议](https://open.bilibili.com/agreement/developer-service)需适用权限，未取得；不抓取非授权接口、不伪造转录 |
 | Product Hunt | GraphQL接口需token；官方MCP的search_launches工具当前明确标记noauth，匿名调用已成功；已接入这一个只读工具，不需要账户授权 |
-| 掘金、CSDN、阿里云开发者社区 | 未核实适用的稳定公开接口和内容使用条件；不把网页内部请求或其他产品协议当成已验证依据 |
-| InfoQ中国 | 有历史官方RSS介绍，但候选feed.xml本次返回451；当前未取得有效订阅，不启用 |
+| 掘金、阿里云开发者社区 | 本轮已核实站外展示/自动化采集限制，待适用许可；见后续复核文档 |
+| CSDN | 官方页面声明的RSS本轮200但正文为空，未获得有效订阅 |
+| InfoQ中国 | 首轮451，本轮feed.xml恢复有效RSS，现已接入标题/摘要；仅链接条目正文保持为空 |
 | 少数派 | 既有用户协议核查发现自动化限制，仍未取得例外授权 |
-| 机器之心 | 官方数据服务入口存在，页面显示登录；未取得适用公开RSS地址及权限 |
-| 量子位 | 官网HTML确有/feed的RSS声明，本次feed403；不绕过 |
+| 机器之心 | 官方RSS需申请开通，匿名数据服务页显示登录；尚无已开通地址 |
+| 量子位 | 首轮feed403，本轮恢复有效RSS，现已接入description摘要 |
 | 36氪 | [官方RSS中心](https://www.36kr.com/rss-center)声明/feed，但本机/feed及robots返回HTML验证页；不当成RSS或允许采集 |
 | Papers with Code | 原站本次302到https://huggingface.co/papers/trending，未把新站算成原站数据 |
 | Semantic Scholar | [当前API许可](https://api.semanticscholar.org/license)含内部研究、公开署名及再分发条件，当前公开演示方案尚未完成核对，未启用 |
-| 天池、DataFountain、数睿思 | 附件官网与名称已纳入目录，稳定公开数据入口和适用权限仍待核验；不以“官网能打开”冒充接通数据 |
+| 天池、数睿思 | 已检查官网目录和许可/资源入口，稳定可用接口仍未核实 |
+| DataFountain | 本轮已核实内容复制传播条件，等待适用许可 |
 
 新增robots检查拒绝HTML验证页，避免HTML被RobotFileParser当作无规则而误放行。上述HTTP仅是本次环境实测，不能保证持续可用，也不是分类正确性证据。真实响应/采集快照仍仅保存在本机，不提交公开Git。
 
@@ -87,3 +89,14 @@ Product Hunt核验更正：官方安装页介绍OAuth登录，但实际tools/lis
 真实验证：首批IT之家路径只接受旧/0/前缀，遇当前/1/文章导致部分完成；未修改旧批次。修复为数字前缀后新批次BA0FA62B93617共30条（IT之家10、Kaggle20），两源完整成功，程序实验LE915D8E069EB4ADE为0候选；离线重放input_verified与same_outputs均true。Kaggle记录发布时间均保持未知，更新时间存在，且仅作技术资源。0候选不等于市场不存在需求。Product Hunt适配器另一次实际只读查询AI返回3条、完整成功；记录仅留本机，不提交正文到公开仓库。
 
 实际网站完整链路：Product Hunt批次B4CA6AC46567D采到8条，来源状态success；程序实验LE9308680D2994893完成，8条产品资料均不成为需求候选，离线重放输入校验和输出一致性通过。完整回归299项通过（另有一项既有AnyIO弃用警告）；测试通过不证明需求判别正确性。
+
+
+## 14个未接入平台再次逐项尝试（2026-11-16）
+
+逐项复核见[SOURCE_ACCESS_REVIEW.md](SOURCE_ACCESS_REVIEW.md)，包含每个平台具体入口、实际观察、未启用理由和后续条件。历史451/403是此前环境观察，不是永久结论：InfoQ中国feed.xml与量子位/feed本轮均返回有效RSS，现已接入。附件8个平台可采集，其余12个仍未接通。全站当前13个启用平台、14个采集选项；GitHub两种采集算同一网站。
+
+InfoQ使用https://www.infoq.cn/feed.xml，robots的/feed/禁止项不匹配/feed.xml；仅订阅title/description。移除纯“点击查看原文”提示，未提供正文则保留空值及body_available=false，角色technical_context/news_headline，不用标题冒充需求证据。量子位只使用官网alternate声明的/feed及description，忽略content:encoded全文，不补抓正文。两源摘要有提供时角色为secondary_report/news_excerpt，未经独立核实。
+
+阿里云开发者社区找到适用社区协议2.8自动化限制，掘金找到6.1站外整理展示限制，DataFountain找到复制传播需许可条件；已更新目录状态，不能继续统一写成“尚未核实接口”。CSDN官方博客声明的RSS本轮200但零字节，仍未接入。36氪仍是验证HTML；机器之心RSS需走官方申请开通，未取得地址；其余核验情况与条件均公开列明。没有使用Cookie、逆向接口、第三方镜像、验证码破解或生成式模型。
+
+本轮网站实测批次B70964DBBC8F9：InfoQ中国6条、量子位2条，两源success；实验LBD4B4712228D485B完成，8条记录、0候选，离线input_verified与same_outputs均true。完整回归303项通过，有一项既有AnyIO弃用警告。浏览器已看到两个新选项、来源计数及原文列表；公网目录实测20项/8项enabled。测试与重放仅验证实现及一致性，不证明需求判别准确率。

@@ -36,7 +36,9 @@ python -m uvicorn app:app --host 127.0.0.1 --port 8000
 - [方向词控制与受控双语扩展](DIRECTION_SCOPE.md)
 - [AI协助事实记录草稿（待核实，非最终提交件）](AI_ASSISTANCE_DRAFT.md)
 
-已接入V2EX最新公开主题、arXiv当日AI摘要、IT之家官方RSS摘要、Kaggle公开数据集目录与Product Hunt官方只读产品搜索。论文/数据集目录仅作技术资源，媒体摘要属于二手报道。采集页提供附件2全部20平台的接入状态，未授权、受限或待核验来源不冒充可用。订阅源不支持历史全站搜索；图片、PDF及音视频尚未自动转换。
+已接入V2EX最新公开主题、arXiv当日AI摘要、IT之家官方RSS摘要、Kaggle公开数据集目录、Product Hunt官方只读产品搜索、InfoQ中国与量子位官方RSS。论文/数据集目录仅作技术资源，媒体摘要属于二手报道。采集页提供附件2全部20平台的接入状态，未授权、受限或待核验来源不冒充可用。订阅源不支持历史全站搜索；图片、PDF及音视频尚未自动转换。
+
+附件未接入来源已逐项重试和核验，具体过程见[来源复核](SOURCE_ACCESS_REVIEW.md)。
 
 运行测试：`python -m pytest -q`（安装requirements-dev.txt中的测试依赖）。
 

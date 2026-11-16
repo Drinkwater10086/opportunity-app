@@ -1,7 +1,6 @@
-"""Reviewed, bounded public feeds: V2EX JSON and arXiv RSS/Atom metadata.
+"""Bounded reviewed public JSON/RSS/Atom and read-only product-search adapters.
 
-V2EX is listed in contest attachment 2. arXiv extends its academic category.
-No arbitrary target URLs, author profiles, comments, or full paper downloads.
+Fixed endpoints only; no arbitrary URLs, account harvesting or full-article fetches.
 """
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -42,6 +41,26 @@ SOURCES = {
     'producthunt': {'name':'Product Hunt','endpoint':'https://mcp.producthunt.com/mcp',
                     'terms':'https://www.producthunt.com/legal','interval':3,
                     'scope':'官方noauth只读search_launches；每组最多8项、最多近365天；名称/标语字面搜索，不取评论、账户或发布功能'},
+    'infoq': {'name':'InfoQ中国','endpoint':'https://www.infoq.cn/feed.xml',
+              'robots':'https://www.infoq.cn/robots.txt','hosts':('www.infoq.cn',),
+              'terms':'https://www.infoq.cn/article/2014/02/infoq-topics-rss','interval':5,
+              'path_pattern':r'/article/[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*',
+              'scope':'仅官方feed.xml当前标题/订阅摘要；部分条目仅原文链接，不补抓全文，不是历史搜索',
+              'content_kind':'news_excerpt','evidence_role':'secondary_report',
+              'reliability_note':'媒体二手报道未经独立核实；订阅可能只有标题及原文链接',
+              'body_method':'官方RSS的description；移除纯查看原文提示，不补抓文章',
+              'license':'InfoQ及原内容权利人保留版权；订阅开放不等于全文转载许可',
+              'strip_link_only_body':True,'policy_reviewed_on':'2026-11-16'},
+    'qbitai': {'name':'量子位','endpoint':'https://www.qbitai.com/feed',
+               'robots':'https://www.qbitai.com/robots.txt','hosts':('www.qbitai.com',),
+               'terms':'https://www.qbitai.com/','interval':5,
+               'path_pattern':r'/\d{4}/\d{2}/\d+\.html',
+               'scope':'仅官网声明的RSS当前标题和摘要，不读取content:encoded全文、评论或图片；不是历史搜索',
+               'content_kind':'news_excerpt','evidence_role':'secondary_report',
+               'reliability_note':'媒体二手报道未经独立核实；只保留订阅description摘要',
+               'body_method':'官方RSS的description；不补抓全文，不使用content:encoded',
+               'license':'量子位及内容权利人保留版权；订阅开放不等于可转载全文',
+               'policy_reviewed_on':'2026-11-16'},
 }
 _lock = threading.Lock()
 _next = {}
@@ -166,6 +185,8 @@ def fetch(key, query, limit, days, window_end):
     for item in items:
         title=sources.redact(content_formats.text(item['title'],'html'))
         raw=sources.redact(content_formats.text(item.get('body') or '',item['body_format']))
+        if cfg.get('strip_link_only_body') and re.fullmatch(r'[\s>》]*点击查看原文[\s>》]*',raw):
+            raw=''
         combined=title+'\n'+raw
         matched=[term for term in search if sources.matches_local_query(combined,term)]
         if not matched:continue
@@ -175,8 +196,12 @@ def fetch(key, query, limit, days, window_end):
         except (ValueError,TypeError,OverflowError):invalid+=1;continue
         if not window_end-timedelta(days=days)<=published<=window_end:
             outside+=1;continue
-        url=urlparse(item['url'])
-        if url.hostname not in cfg['hosts'] or url.scheme not in ('http','https') or url.username or url.password or url.port not in (None,80,443):
+        try:
+            url=urlparse(item['url'])
+            safe_url=(url.hostname in cfg['hosts'] and url.scheme in ('http','https')
+                      and not url.username and not url.password and url.port in (None,80,443))
+        except (ValueError,TypeError):safe_url=False
+        if not safe_url:
             invalid+=1;continue
         path_ok = re.fullmatch(cfg.get('path_pattern',r'/t/\d+' if key=='v2ex' else r'/abs/(?:\d{4}\.\d{4,5}|[a-z-]+/\d{7})(?:v\d+)?'),url.path)
         if not path_ok:invalid+=1;continue
@@ -189,8 +214,8 @@ def fetch(key, query, limit, days, window_end):
                         'license':cfg.get('license','arXiv描述性元数据CC0 1.0；不含论文全文' if key=='arxiv' else '原帖权利归作者；公开接口可读不代表可任意转载'),
                         'provenance':{'body_available':bool(raw),'body_method':cfg.get('body_method','论文摘要，未获取全文' if key=='arxiv' else '公开主题正文，未采集回复或成员资料'),
                                       'transport_format':transport,'content_format':item['body_format'],
-                                      'content_kind':cfg.get('content_kind','abstract' if key=='arxiv' else 'discussion'),
-                                      'evidence_role':cfg.get('evidence_role','technical_context' if key=='arxiv' else 'demand_signal'),
+                                      'content_kind':'news_headline' if key=='infoq' and not raw else cfg.get('content_kind','abstract' if key=='arxiv' else 'discussion'),
+                                      'evidence_role':'technical_context' if key=='infoq' and not raw else cfg.get('evidence_role','technical_context' if key=='arxiv' else 'demand_signal'),
                                       'date_basis':item['date_basis'],'matched_queries':matched,'query_match_method':sources.LOCAL_QUERY_MATCH_VERSION},
                         'reliability':{'origin':cfg['name'],'note':cfg.get('reliability_note','论文摘要只用于技术背景，不单独作为需求机会证据' if key=='arxiv' else '社区自述未经独立核实'),
                                        'retained_body_sha256':hashlib.sha256(raw.encode()).hexdigest()}})
