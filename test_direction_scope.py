@@ -41,3 +41,23 @@ def test_scope_evidence_uses_same_boundary_as_relevance_check():
     evidence=result['score_detail']['components']['relevant']['evidence']
     assert any(e['start']==text.index('ecommerce',text.index('Our')) for e in evidence)
     assert all(text[e['start']:e['end']]==e['text'] for e in evidence)
+
+
+
+def test_general_ai_direction_matches_english_terms_without_losing_qualifiers():
+    config=LocalConfig().model_dump()
+    texts=['Our team needs AI meeting transcription using a Whisper model API.',
+           'Our team needs artificial intelligence for email extraction using a model API.',
+           'Our team needs GPT4 for email extraction using a model API.']
+    for text in texts:
+        result=judge(row(text),'人工智能',config)
+        assert result['direction_scope']['mode']=='ai_profile' and result['opportunity']==1
+    assert direction_scope('artificial intelligence',config)['mode']=='ai_profile'
+    assert direction_scope('AI applications',config)['mode']=='ai_profile'
+    assert direction_scope('人工智能医疗',config)['profile']=='医疗'
+    assert direction_scope('人工智能合同审查',config)['mode']=='literal'
+    assert not judge(row(texts[0]),'人工智能医疗',config)['relevant']
+    assert not judge(row('Our team needs email storage and manual reports.'),'人工智能',config)['relevant']
+    explicit=LocalConfig(direction_terms='contract').model_dump()
+    assert direction_scope('人工智能',explicit)['mode']=='explicit'
+    assert not judge(row(texts[0]),'人工智能',explicit)['relevant']

@@ -13,11 +13,15 @@ import local_embeddings
 import evidence_scoring
 import context_rules
 import local_value
+import local_business
+import local_cache
+import local_recall
+import local_submission
 import analysis_engine
 import local_planning
 from local_routes import LocalConfig
 
-MODULES=(local_analysis,local_preprocessing,local_embeddings,evidence_scoring,context_rules,local_value,analysis_engine,local_planning)
+MODULES=(local_analysis,local_preprocessing,local_embeddings,evidence_scoring,context_rules,local_value,local_business,local_cache,local_recall,local_submission,analysis_engine,local_planning)
 OUTPUT_KEYS=('judgments','clusters','evaluation','representation','input_sha256',
              'candidate_count','record_count','duplicate_diagnostics')
 
@@ -61,6 +65,8 @@ def replay(document,direction=None,allow_code_change=False):
     current=local_analysis.analyze({'direction':scope},records,config,count)
     def canonical(value):return json.dumps(value,ensure_ascii=False,sort_keys=True,allow_nan=False)
     differences=[key for key in OUTPUT_KEYS if canonical(saved[key])!=canonical(current[key])]
+    if 'semantic_recall' in saved and canonical(saved['semantic_recall'])!=canonical(current['semantic_recall']):
+        differences.append('semantic_recall')
     if 'proposal_drafts' in saved and canonical(saved['proposal_drafts'])!=canonical(local_planning.initial_drafts(current)):
         differences.append('proposal_drafts')
     before={k for k,v in saved['judgments'].items() if v['opportunity']}

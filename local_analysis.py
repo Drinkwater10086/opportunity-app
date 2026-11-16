@@ -13,6 +13,10 @@ import local_embeddings
 import evidence_scoring
 import context_rules
 import local_value
+import local_business
+import local_cache
+import local_recall
+from pathlib import Path
 from bisect import bisect_left
 from collections import Counter
 
@@ -27,7 +31,7 @@ from sklearn.preprocessing import normalize
 
 from analysis_engine import FUNCTIONS, INDUSTRIES, rank_clusters
 
-VERSION = 'local-rules-v19-program-release'
+VERSION = 'local-rules-v20-business-evidence'
 SEED = 42
 MAX_RECORDS = 5000
 MAX_CHARACTERS = 20_000_000
@@ -67,7 +71,7 @@ INDUSTRY_TERMS = dict(zip(INDUSTRIES, [
 OFFICE = '会议,邮件,审批,合同,办公,销售,人事,财务,meeting,meetings,email,emails,approval,approvals,contract,contracts,office,offices,knowledge base,knowledge bases,sales,crm,human resources,invoice,invoices,payroll'
 PATTERNS = {
     'need': r'有没有|求推荐|求助|需要|希望|耗时|费时|手动|无法|困难|痛点|重复录入|效率低|\b(?:needs?|needed|looking for|struggl\w*|manual(?:ly)?|time.consuming|cannot|can.t|unable|problem|feature request|how (?:can|do|to))\b',
-    'ai': r'人工智能|大模型|语言模型|机器学习|语音识别|图像识别|(?<![A-Za-z0-9_])(?:AI|LLMs?|GPT[A-Za-z0-9]*|machine learning|Whisper|OCR|RAG|neural|language model)(?![A-Za-z0-9_])',
+    'ai': r'人工智能|大模型|语言模型|机器学习|语音识别|图像识别|(?<![A-Za-z0-9_])(?:AI|LLMs?|GPT[A-Za-z0-9]*|machine learning|artificial intelligence|Whisper|OCR|RAG|neural|language model)(?![A-Za-z0-9_])',
     'feasible': r'模型|识别|检索|转写|分类|预测|抽取|\b(?:API|model|OCR|Whisper|retrieval|transcri\w*|classif\w*|extract\w*|predict\w*)\b',
     'context': r'用户|员工|客户|团队|会议|文档|邮件|合同|报表|流程|患者|学生|教师|\b(?:users?|employees?|customers?|teams?|meetings?|documents?|emails?|contracts?|reports?|workflow|patients?|students?|teachers?|invoices?)\b',
     'exclude': r'购买链接|限时优惠|\b(?:sponsored|buy now|limited.time offer|affiliate link)\b',
@@ -94,6 +98,10 @@ def direction_scope(direction,config):
         value=re.sub(r'(?<![a-z0-9_])(?:AI|applications?|industry|scenarios?|enterprise|automation)(?![a-z0-9_])','',value,flags=re.I)
         return re.sub(r'[\s:：,，;；/]+','',value).casefold()
     requested=terms(direction);normalized=normalize(direction)
+    if normalized in ('','artificialintelligence') and re.search(r'人工智能|(?<![a-z0-9])(?:AI|artificial intelligence)(?![a-z0-9])',direction,re.I):
+        return {'mode':'ai_profile','profile':'人工智能','configured_terms':requested,
+                'expanded_terms':terms('人工智能,artificial intelligence,AI,LLM,GPT,machine learning,机器学习,Whisper,OCR,RAG,语音识别,图像识别'),
+                'normalized_direction':normalized,'note':'通用人工智能方向匹配声明的中英能力词及原文AI信号；附加业务限定仍按具体方向处理'}
     if normalized in ('办公','office'):
         return {'mode':'office_profile','profile':'办公','configured_terms':requested,
                 'expanded_terms':terms(OFFICE),'normalized_direction':normalized,
@@ -166,6 +174,8 @@ def judge_window(record, direction, config):
     direct_scope_hits=[term for term in scope_definition['configured_terms'] if contains(text,term)]
     scope=list(dict.fromkeys(scope_definition['configured_terms']+scope_definition['expanded_terms']))
     scope_hits = [term for term in scope if contains(text, term)]
+    if scope_definition['mode']=='ai_profile':
+        scope_hits=list(dict.fromkeys(scope_hits+[match.group() for match in re.finditer(PATTERNS['ai'],text,re.I)]))
     function, function_scores = label(text, FUNCTION_TERMS, '')
     industry, industry_scores = label(text, INDUSTRY_TERMS, '其他')
     quality = len(text.strip()) >= 30
@@ -180,7 +190,8 @@ def judge_window(record, direction, config):
     score_detail['raw_evidence_score']=score
     score_detail['selected_method']=config.get('score_method','evidence_strength')
     if config.get('score_method','evidence_strength')=='completeness':score=score_detail['completeness']
-    excluded = bool(hits['exclude']) or supporting_only or tutorial['exclude'] or job_posting['exclude'] or compilation['exclude'] or showcase['exclude']
+    business_profile=local_business.inspect(text)
+    excluded = business_profile['technical_only'] or bool(hits['exclude']) or supporting_only or tutorial['exclude'] or job_posting['exclude'] or compilation['exclude'] or showcase['exclude']
     score_detail['raw_selected_score']=score
     if config.get('score_method','evidence_strength')=='evidence_strength':
         cap=.2 if excluded else .49 if not all(checks.values()) else 1.
@@ -190,12 +201,13 @@ def judge_window(record, direction, config):
     score_detail['final_score']=score
     opportunity = int(all(checks.values()) and not excluded and score >= config['threshold'])
     hard_failures = [key for key, passed in checks.items() if not passed] + (['exclude'] if hits['exclude'] else []) + (['tutorial_content'] if tutorial['exclude'] else []) + (['job_posting'] if job_posting['exclude'] else []) + (['technical_context_only'] if supporting_only else [])
+    if business_profile['technical_only']:hard_failures.append('technical_incident')
     if compilation['exclude']:hard_failures.append('compiled_background')
     if showcase['exclude']:hard_failures.append('solution_showcase')
     failures=hard_failures+(['below_threshold'] if score<config['threshold'] else [])
     def quote(key):
         return hits[key]['text'] if hits[key] else ''
-    return {**checks, 'opportunity': opportunity, 'excluded': excluded, 'confidence': score,
+    return {**checks, 'business_profile':business_profile, 'opportunity': opportunity, 'excluded': excluded, 'confidence': score,
             'score_kind': '启发式证据强度，非校准概率' if config.get('score_method','evidence_strength')=='evidence_strength' else '旧版条件完整性分数，非校准概率',
             'score_detail':score_detail,'rule_completeness':score_detail['completeness'],
             'content_context':{'version':context_rules.VERSION,'denied_need_spans':denied_needs,'tentative_need_spans':tentative_needs,'tutorial':tutorial},
@@ -211,7 +223,7 @@ def judge_window(record, direction, config):
             'relevant_evidence': scope_hits}
 
 
-def judge(record, direction, config):
+def _judge(record, direction, config):
     original = record['content']
     structured = preprocessing.structure(original)
     # Genre cues may sit outside the selected demand window. Keep source offsets
@@ -233,8 +245,6 @@ def judge(record, direction, config):
             continue
         result = judge_window({**record, 'content': window}, direction, config)
         candidates.append((int(result['gate_passed']), result['confidence'], -start, start, end, result))
-        if config.get('score_method')=='completeness' and result['gate_passed']:
-            break
     if not candidates and fallback:
         _, start, end, window = fallback
         result = judge_window({**record, 'content': window}, direction, config)
@@ -244,6 +254,29 @@ def judge(record, direction, config):
     else:
         start, end, window = next(preprocessing.windows(structured),(0,0,''))
         result = judge_window({**record, 'content': window}, direction, config)
+    # Store separately valid passages without combining missing gates across them.
+    # Ranked selection preserves the primary passage; overlapping windows are skipped.
+    contexts=[];business_contexts=[]
+    eligible=sorted([row for row in candidates if row[5]['gate_passed']],key=lambda row:row[:3],reverse=True)
+    for _,score,_,lo,hi,assessment in [(0,result['confidence'],0,start,end,result)]+eligible:
+        if any(lo<entry['end'] and hi>entry['start'] for entry in contexts):continue
+        if len(contexts)>=8:break
+        signals={}
+        for key,span in assessment['business_profile']['signals'].items():
+            if span:
+                a,b=lo+span['start'],lo+span['end']
+                signals[key]={'start':a,'end':b,'text':original[a:b]}
+            else:signals[key]=None
+        business_contexts.append({'start':lo,'end':hi,'signals':signals})
+        contexts.append({'start':lo,'end':hi,'text':original[lo:hi],
+                         'confidence':score,'gate_passed':assessment['gate_passed']})
+    result['evidence_contexts']=contexts
+    result['business_contexts']=business_contexts
+    result['evidence_context_summary']={'stored_count':len(contexts),'eligible_window_count':len(eligible),
+        'maximum_stored':8,'method':'主判别段优先；其余独立通过硬条件的窗口按分数选取，最多8段，重叠不重复保存'}
+    for span in result['business_profile']['signals'].values():
+        if span:
+            span['start']+=start;span['end']+=start;span['text']=original[span['start']:span['end']]
     for span in result['evidence_spans'].values():
         if span:
             for field in ('start','end','match_start','match_end'): span[field] += start
@@ -284,6 +317,31 @@ def judge(record, direction, config):
     result['evidence_sufficiency']={key:bool(result['evidence_spans'][key]) for key in ('need','context','ai','feasible')}
     result['data_quality']=structured['quality']
     return result
+
+
+_RULE_SIGNATURE=tuple(hashlib.sha256(Path(module).read_bytes()).hexdigest() for module in
+                      (__file__,preprocessing.__file__,context_rules.__file__,evidence_scoring.__file__,local_business.__file__))
+
+
+def judge(record,direction,config):
+    if not config.get('cache_enabled',True):return _judge(record,direction,config)
+    rule_config={key:config.get(key) for key in ('threshold','score_method','direction_terms')}
+    return local_cache.cached('judgment',{'code':_RULE_SIGNATURE,'record':record,
+        'direction':direction,'config':rule_config},lambda:_judge(record,direction,config))
+
+
+def clustered_labels(distances,threshold,positives,judgments,mode):
+    if mode=='flat':return partition(distances,threshold)
+    if mode!='function_then_text':raise ValueError('未知聚类方式')
+    labels=np.empty(len(positives),dtype=int);next_label=0
+    groups={}
+    for index,record in enumerate(positives):groups.setdefault(judgments[record['id']]['function'],[]).append(index)
+    for function in sorted(groups):
+        indices=np.array(groups[function],dtype=int)
+        subgroup=partition(distances[np.ix_(indices,indices)],threshold)
+        for group in sorted(set(subgroup)):
+            labels[indices[subgroup==group]]=next_label;next_label+=1
+    return labels
 
 
 def partition(distances, threshold):
@@ -435,6 +493,7 @@ def analyze(batch, records, config, source_count):
     embedding_metadata = None
     vector_method = config.get('vector_method','lsa')
     cluster_threshold = config.get('semantic_distance_threshold',.15) if vector_method=='e5' else config['distance_threshold']
+    cluster_mode=config.get('cluster_mode','flat')
     duplicates = preprocessing.duplicate_groups([], np.zeros((0,0)))
     if positives:
         vectorizer = TfidfVectorizer(analyzer='char', ngram_range=(2, 4), max_features=20000,
@@ -460,7 +519,7 @@ def analyze(batch, records, config, source_count):
         original_vectors = TfidfVectorizer(analyzer='char', ngram_range=(2,4), max_features=20000, sublinear_tf=True).fit_transform([r['content'] for r in positives])
         original_distances = distances_for(original_vectors)
         duplicates = preprocessing.duplicate_groups(positives, original_distances)
-        labels = partition(distances, cluster_threshold)
+        labels = clustered_labels(distances,cluster_threshold,positives,judgments,cluster_mode)
         base_labels = partition(baseline_distances, config['distance_threshold'])
         evaluation['primary'] = diagnostic(distances, labels)
         evaluation['baseline'] = diagnostic(baseline_distances, base_labels)
@@ -470,11 +529,11 @@ def analyze(batch, records, config, source_count):
         evaluation['baseline_labels'] = dict(zip([r['id'] for r in positives], map(int, base_labels)))
         if vector_method=='e5':
             evaluation['semantic_threshold_grid'] = [
-                {'distance_threshold':threshold,**diagnostic(distances,partition(distances,threshold))}
+                {'distance_threshold':threshold,**diagnostic(distances,clustered_labels(distances,threshold,positives,judgments,cluster_mode))}
                 for threshold in (.05,.1,.15,.2,.25)]
         perturbation = .03 if vector_method=='e5' else .1
         for threshold in sorted({max(.01, cluster_threshold-perturbation), min(1.5, cluster_threshold+perturbation)}):
-            other = partition(distances, threshold)
+            other = clustered_labels(distances,threshold,positives,judgments,cluster_mode)
             evaluation['sensitivity'].append({'distance_threshold': threshold,
                 'ari': float(adjusted_rand_score(labels, other)) if len(labels) >= 2 else None,
                 **diagnostic(distances, other)})
@@ -504,6 +563,7 @@ def analyze(batch, records, config, source_count):
         clusters.sort(key=lambda c:(-c['score'],c['id']))
         for index,cluster in enumerate(clusters,1):cluster['priority']=index
 
+    for cluster in clusters:cluster['brief']=local_business.theme_brief(cluster,judgments)
     members = [rid for c in clusters for rid in c['records']]
     evaluation['value_diagnostics']=local_value.diagnostics(clusters,source_count,(config['coverage_weight'],config['scale_weight']),positives)
     tie_sizes={cid:len(group['cluster_ids']) for group in evaluation['value_diagnostics']['tie_groups'] for cid in group['cluster_ids']}
@@ -519,6 +579,8 @@ def analyze(batch, records, config, source_count):
             'input_sha256': hashlib.sha256(signature.encode()).hexdigest(), 'config': config,
             'representation': representation, 'judgments': judgments, 'clusters': clusters,
             'embedding_metadata': embedding_metadata, 'effective_distance_threshold': cluster_threshold,
+            'cluster_mode':cluster_mode,
+            'semantic_recall':local_recall.suggestions(records,judgments,batch['direction'],config),
             'evaluation': evaluation, 'record_count': len(records), 'candidate_count': len(positives),
             'exclusions': dict(exclusions), 'source_count': source_count, 'duplicate_diagnostics': duplicates,
             'preprocessing_version': preprocessing.VERSION,

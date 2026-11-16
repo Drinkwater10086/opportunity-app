@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>程序分析</title><link rel="stylesheet" href="/style.css"><script src="/local-ui.js?v=20261116-product-release" defer></script></head>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>程序分析</title><link rel="stylesheet" href="/style.css"><script src="/local-ui.js?v=20261116-analysis-upgrade" defer></script></head>
 <body><main style="max-width:1200px;margin:auto;padding:24px"><header><h1>程序分析</h1><a href="/">返回数据采集</a></header>
 <p>从采集记录中识别机会、归纳主题、评估价值并整理立项策划。</p>
 
@@ -10,6 +10,9 @@
 <label>文本向量方法<select id="vector-method"><option value="lsa">LSA 潜在语义</option><option value="tfidf">TF-IDF 词面向量</option><option value="e5">E5多语言句向量（需本地模型）</option></select></label>
 <label>E5 距离阈值（仅E5生效）<input id="semantic-distance" type="number" value="0.15" min="0.01" max="0.8" step="0.01" required></label>
 <label>聚类距离阈值（越大越容易合并）<input id="distance" type="number" value="0.65" min="0.05" max="1.5" step="0.05" required></label>
+<label>聚类方式<select id="cluster-mode"><option value="flat">统一聚类</option><option value="function_then_text">按功能分组后聚类</option></select></label>
+<label class="check"><input id="semantic-recall" type="checkbox">显示语义扩展线索（需本地E5文件）</label>
+<label>语义线索相似度阈值<input id="recall-threshold" type="number" value="0.85" min="0.5" max="1" step="0.01" required></label>
 <label>LSA 最大维数<input id="dimensions" type="number" value="32" min="2" max="128" required></label>
 <label>来源覆盖权重<input id="coverage" type="number" value="0.6" min="0" max="1" step="0.05" required></label>
 <label>记录规模权重<input id="scale" type="number" value="0.4" min="0" max="1" step="0.05" required></label>

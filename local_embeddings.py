@@ -8,6 +8,7 @@ from functools import lru_cache
 import threading
 
 import numpy as np
+import local_cache
 
 MODEL_ID='intfloat/multilingual-e5-small'
 REVISION='614241f622f53c4eeff9890bdc4f31cfecc418b3'
@@ -72,7 +73,7 @@ def token_chunks(text,tokenizer):
         start=stop-32
 
 
-def embed(texts):
+def _embed(texts):
     directory=model_directory()
     if not available():raise ValueError('本地E5模型尚未准备，请运行setup_semantic_model.py；未自动下载或退回词面算法')
     signature=tuple((directory/f).stat().st_mtime_ns for f in (*FILES,'manifest.json'))
@@ -111,3 +112,18 @@ def embed(texts):
                      'providers':['CPUExecutionProvider'],'prefix':'query: ', 'pooling':'attention-mask mean; L2 normalization; token-weighted chunk mean then L2',
                      'max_tokens':512,'chunk_tokens':480,'overlap_tokens':32,'truncated':False,
                      'coverage':coverage,'note':'预训练模型仅作本地语义特征提取，存在量化误差；多分片均值可能稀释局部需求，不保证业务正确性。'}
+
+
+_EMBED_CODE=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
+
+def embed(texts):
+    directory=model_directory()
+    if not available():raise ValueError('本地E5模型尚未准备，请运行setup_semantic_model.py；未自动下载或退回词面算法')
+    signature=[(name,(directory/name).stat().st_mtime_ns,(directory/name).stat().st_size) for name in (*FILES,'manifest.json')]
+    def compute():
+        vectors,metadata=_embed(texts)
+        return {'vectors':vectors.tolist(),'metadata':metadata}
+    result=local_cache.cached('embedding',{'code':_EMBED_CODE,'directory':str(directory.resolve()),
+        'signature':signature,'texts':texts},compute)
+    return np.asarray(result['vectors'],dtype=np.float64),result['metadata']

@@ -22,6 +22,10 @@ import local_embeddings
 import evidence_scoring
 import context_rules
 import local_value
+import local_business
+import local_cache
+import local_recall
+import local_submission
 import analysis_engine
 
 RUN_LOCK = threading.Lock()
@@ -36,6 +40,10 @@ class LocalConfig(BaseModel):
     scale_weight: float = Field(default=.4, ge=0, le=1, allow_inf_nan=False)
     direction_terms: str = Field(default='', max_length=2000)
     vector_method: Literal['lsa','tfidf','e5'] = 'lsa'
+    cluster_mode: Literal['flat','function_then_text'] = 'flat'
+    cache_enabled: bool = True
+    semantic_recall: bool = False
+    semantic_recall_threshold: float = Field(default=.85,ge=.5,le=1,allow_inf_nan=False)
     semantic_distance_threshold: float = Field(default=.15,ge=.01,le=.8,allow_inf_nan=False)
     score_method: Literal['evidence_strength','completeness'] = 'evidence_strength'
 
@@ -80,10 +88,11 @@ def install(app, connect, get_records, require_usable_batch, root, sources, csv_
             with connect() as db:
                 db.execute("UPDATE local_runs SET status='running' WHERE id=?", (run_id,))
             wall_start,cpu_start=time.perf_counter(),time.thread_time()
+            cache_start=local_cache.stats()
             result = local_analysis.analyze(batch, records, config, source_count)
             result['source_code_sha256'] = hashlib.sha256(Path(local_analysis.__file__).read_bytes()).hexdigest()
             result['source_hashes'] = {module.__name__: hashlib.sha256(Path(module.__file__).read_bytes()).hexdigest()
-                                       for module in (local_analysis, local_preprocessing, local_comparison, local_planning, local_embeddings, evidence_scoring, context_rules, local_value, analysis_engine)}
+                                       for module in (local_analysis, local_preprocessing, local_comparison, local_planning, local_embeddings, evidence_scoring, context_rules, local_value, local_business, local_cache, local_recall, local_submission, analysis_engine)}
             # Retain the exact inputs used by this run, not a future mutable database view.
             result['input_records'] = records
             result['proposal_drafts']=local_planning.initial_drafts(result)
@@ -92,6 +101,8 @@ def install(app, connect, get_records, require_usable_batch, root, sources, csv_
             result['execution_metrics']={
                 'measurement_version':'local-worker-timing-v1',
                 'wall_seconds':round(time.perf_counter()-wall_start,6),
+                'cache':{**local_cache.stats(),'run_hits':local_cache.stats()['hits']-cache_start['hits'],
+                         'run_misses':local_cache.stats()['misses']-cache_start['misses']},
                 'worker_thread_cpu_seconds':round(time.thread_time()-cpu_start,6),
                 'input_characters':characters,'input_content_utf8_bytes':content_bytes,
                 'environment':{'system':platform.system(),'architecture':platform.machine(),
@@ -132,7 +143,7 @@ def install(app, connect, get_records, require_usable_batch, root, sources, csv_
             raise HTTPException(403, '研究员或管理员才能启动本地分析')
         require_usable_batch(batch_id)
         batch, records = get_records(batch_id)
-        if body.vector_method=='e5' and not local_embeddings.available():
+        if (body.vector_method=='e5' or body.semantic_recall) and not local_embeddings.available():
             raise HTTPException(409,'本地E5模型未准备；请先运行setup_semantic_model.py，不会自动下载或换用其他算法')
         if batch['status'] != 'collected' or not records:
             raise HTTPException(409, '请先完成采集；部分失败批次应先复制完整成功来源')
@@ -166,11 +177,16 @@ def install(app, connect, get_records, require_usable_batch, root, sources, csv_
         right=finished(batch_id,other_id)['result']
         return {'left_run_id':run_id,'right_run_id':other_id, **local_comparison.compare(left,right)}
 
+    @app.get('/api/batches/{batch_id}/local-runs/{run_id}/submission-check.json')
+    def submission_check(batch_id: str,run_id: str):
+        saved=finished(batch_id,run_id)
+        return {'batch_id':batch_id,'run_id':run_id,**local_submission.check(saved['result'])}
+
     @app.get('/api/batches/{batch_id}/local-runs/{run_id}/result{number}.csv')
     def export(batch_id: str, run_id: str, number: int):
         result = finished(batch_id, run_id)['result']
         if number == 1:
-            header = ['采集批次号','记录编号','来源网站','来源链接','内容','发布时间','星标数','热度指标（原平台名称与数值）','更新时间','采集时间']
+            header = ['采集批次号','记录编号','来源网站名称','来源链接','内容','发布时间','星标数','热度指标（原平台名称与数值）','更新时间','采集时间']
             rows = [[batch_id,r['id'],r['source'],r['url'],r['content'],r['published_at'],r['stars'],
                      json.dumps(r.get('metadata',{}).get('heat',{}),ensure_ascii=False),r.get('updated_at'),r.get('collected_at')]
                     for r in result['input_records']]
@@ -178,7 +194,7 @@ def install(app, connect, get_records, require_usable_batch, root, sources, csv_
             header = ['采集批次号','记录编号','是否构成机会','机会置信度','功能类别','所属行业']
             rows = [[batch_id,rid,j['opportunity'],j['confidence'],j['function'],j['industry']] for rid,j in result['judgments'].items()]
         elif number == 3:
-            header = ['采集批次号','主题簇编号','主题簇名称','功能类别','所属行业','簇内机会记录数','来源覆盖','簇内机会记录']
+            header = ['采集批次号','主题簇编号','主题簇名称','功能类别','所属行业','簇内机会记录数','来源网站覆盖','簇内机会记录编号']
             rows = [[batch_id,c['id'],c['name'],c['function'],c['industry'],c['count'],'；'.join(c['sources']),'；'.join(c['records'])] for c in result['clusters']]
         elif number == 4:
             header = ['采集批次号','主题簇编号','主题簇名称','功能类别','所属行业','机会价值分','优先级']

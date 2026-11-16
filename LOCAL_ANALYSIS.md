@@ -129,3 +129,8 @@ v17（local-rules-v17-evidence-boundaries，预处理structure-and-duplicate-v4-
 `local-rules-v19-program-release`统一分析记录、质量评价和结果导出用语。当前源码只保留采集与程序处理链路，标签目录和加权排序位于analysis_engine，分析运行管理位于local_routes。旧功能实现保存在Git历史中，不参与现行应用构建。旧数据库保留，新分析结果使用独立运行记录。
 
 采集页支持手动输入1–500的单来源单组上限，并显示来源选项数、检索词组数和合计上限；来源适配器的实际条目数、配额与去重规则保持不变。
+
+
+## v20：业务任务、多段证据与可选处理方式
+
+当前功能、参数与本地验证见[本地分析说明](ANALYSIS_UPGRADE.md)。新增模块local_business、local_recall、local_cache、local_submission；它们与主分析的源码哈希一并保存。旧分析不覆盖，新功能须创建新的分析记录。result1/3的来源及成员编号列名对齐赛事表格用语，result1仍保留原平台热度与时间附加字段。
