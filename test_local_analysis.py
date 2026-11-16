@@ -102,6 +102,12 @@ def test_routes_no_key_isolation_exports_and_legacy_untouched(tmp_path):
         base = f'/api/batches/B1/local-runs/{rid}'
         run = client.get(base).json()
         assert run['status'] == 'complete', run
+        metrics=run['result']['execution_metrics']
+        assert metrics['wall_seconds']>=0 and metrics['worker_thread_cpu_seconds']>=0
+        inputs=run['result']['input_records']
+        assert metrics['input_characters']==sum(len(r['content']) for r in inputs)
+        assert metrics['input_content_utf8_bytes']==sum(len(r['content'].encode('utf8')) for r in inputs)
+        assert len(metrics['runner_sha256'])==64 and metrics['environment']['system']
         assert client.get('/api/batches/B2/local-runs/'+rid).status_code == 404
         for n in range(1, 5):
             response = client.get(base+f'/result{n}.csv')

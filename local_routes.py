@@ -2,6 +2,9 @@
 import hashlib
 import json
 import threading
+import time
+import os
+import platform
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -76,6 +79,7 @@ def install(app, connect, get_records, require_usable_batch, root, sources, csv_
         try:
             with connect() as db:
                 db.execute("UPDATE local_runs SET status='running' WHERE id=?", (run_id,))
+            wall_start,cpu_start=time.perf_counter(),time.thread_time()
             result = local_analysis.analyze(batch, records, config, source_count)
             result['source_code_sha256'] = hashlib.sha256(Path(local_analysis.__file__).read_bytes()).hexdigest()
             result['source_hashes'] = {module.__name__: hashlib.sha256(Path(module.__file__).read_bytes()).hexdigest()
@@ -83,6 +87,17 @@ def install(app, connect, get_records, require_usable_batch, root, sources, csv_
             # Retain the exact inputs used by this run, not a future mutable database view.
             result['input_records'] = records
             result['proposal_drafts']=local_planning.initial_drafts(result)
+            characters=sum(len(row['content']) for row in records)
+            content_bytes=sum(len(row['content'].encode('utf8')) for row in records)
+            result['execution_metrics']={
+                'measurement_version':'local-worker-timing-v1',
+                'wall_seconds':round(time.perf_counter()-wall_start,6),
+                'worker_thread_cpu_seconds':round(time.thread_time()-cpu_start,6),
+                'input_characters':characters,'input_content_utf8_bytes':content_bytes,
+                'environment':{'system':platform.system(),'architecture':platform.machine(),
+                               'logical_cpu_count':os.cpu_count()},
+                'runner_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                'note':'测量本地分析、源码哈希与策划初稿阶段；不含采集、排队、结果序列化/写库、网络传输与页面渲染。CPU仅当前工作线程，不含其他线程或原生并行线程；逻辑CPU数不是分配核数。字符及UTF8字节只计输入content，不是内存峰值或数据库大小。耗时不可用于证明业务效果或零运行成本。'}
             with connect() as db:
                 db.execute("UPDATE local_runs SET status='complete',result=? WHERE id=?",
                            (json.dumps(result, ensure_ascii=False, allow_nan=False), run_id))

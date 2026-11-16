@@ -44,6 +44,10 @@ function evidenceInspector(result){
 function evaluationDetails(result){
  const root=disclosure('实验评价、方法与限制');root.id='technical-evaluation';root.append(node('p',result.representation),node('p',`方法 ${result.version} · scikit-learn ${result.sklearn_version} · 随机种子 ${result.seed}`));
  const params=disclosure('本次实验参数（上方表单仅用于下一次运行）');params.append(node('pre',JSON.stringify(result.config,null,2)));root.append(params);
+ const timing=disclosure('本次运行耗时与输入规模');
+ if(result.execution_metrics){const m=result.execution_metrics;timing.append(node('p',`本地处理耗时 ${m.wall_seconds.toFixed(3)} 秒；当前工作线程CPU时间 ${m.worker_thread_cpu_seconds.toFixed(3)} 秒。`),node('p',`输入 ${m.input_characters} 字符 / ${m.input_content_utf8_bytes} UTF-8字节；${m.environment.system} / ${m.environment.architecture}，系统逻辑CPU数 ${m.environment.logical_cpu_count??'未获取'}。`),node('p',m.note));}
+ else timing.append(node('p','此历史实验未保存耗时测量，不补记为0；如需测量可在同批次新建本地实验。'));
+ root.append(timing);
  if(result.embedding_metadata){const e=result.embedding_metadata;root.append(node('p',`${e.model_id} · ${e.revision} · ${e.license} · ${e.coverage.reduce((n,c)=>n+c.length,0)}个分片 · 未截断：${!e.truncated}`),node('p',e.note));}
  const why=disclosure('筛选原因（可重叠）');for(const [key,count] of Object.entries(result.exclusions))why.append(node('p',`${reasonNames[key]??key}：${count}条`));why.append(node('p','规则只提供证据线索，不能证明需求真实、AI必要性或市场价值。'));root.append(why);
  if(result.duplicate_diagnostics){const d=result.duplicate_diagnostics,duplicates=disclosure('近重复诊断');duplicates.append(node('p',`${d.groups.length}个组，${d.duplicate_count}条重复关联；正式规模分按记录条数计算。`),node('p',d.note));for(const g of d.groups)duplicates.append(node('p',`${g.representative_id}：${g.records.join('、')}`));root.append(duplicates);}
