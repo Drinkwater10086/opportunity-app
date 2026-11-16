@@ -1,16 +1,27 @@
 """Conservative, offset-preserving analysis views. Original records are immutable."""
 import re
 
-VERSION = 'structure-and-duplicate-v4-list-boundaries'
+VERSION = 'structure-and-duplicate-v5-markup'
 EXCLUDED = re.compile(r'```[\s\S]*?(?:```|\Z)|~~~[\s\S]*?(?:~~~|\Z)|(?m:^[ \t]*>[^\n]*(?:\n|$))')
 HTML_HIDDEN=re.compile(r'<!--[\s\S]*?(?:-->|\Z)|'
                        r'<(?P<hidden>script|style|iframe|template)\b[^>]*>[\s\S]*?(?:</(?P=hidden)\s*>|\Z)',re.I)
 
 
+# Match known HTML markup, including quoted '>' in attributes, without treating
+# generic types such as List<T> as tags. These are analysis exclusions only.
+HTML_MARKUP=re.compile(
+    r'</?(?:a|abbr|article|aside|b|blockquote|br|button|caption|code|dd|details|'
+    r'div|dl|dt|em|figcaption|figure|footer|h[1-6]|header|hr|i|img|input|label|'
+    r'li|main|nav|ol|p|pre|section|small|source|span|strong|sub|summary|sup|'
+    r'table|tbody|td|th|thead|tr|u|ul|video)(?=[\s/>])'
+    r'(?:[^>\"\']|\"[^\"]*\"|\'[^\']*\')*>', re.I)
+URL=re.compile(r'https?://[^\s<>\"\']+',re.I)
+
+
 def structure(text):
     masked = list(text)
     regions=[]
-    for pattern in (EXCLUDED,HTML_HIDDEN):
+    for pattern in (EXCLUDED,HTML_HIDDEN,HTML_MARKUP,URL):
         search_text=text
         if pattern is HTML_HIDDEN:
             # Ignore literal HTML examples inside code before matching HTML.
@@ -23,7 +34,8 @@ def structure(text):
             search_text=''.join(html_view)
         for match in pattern.finditer(search_text):
             value=match.group().lstrip()
-            kind='html_hidden' if pattern is HTML_HIDDEN else 'quote' if value.startswith('>') else 'fenced_code'
+            kind=('html_hidden' if pattern is HTML_HIDDEN else 'html_markup' if pattern is HTML_MARKUP
+                  else 'url' if pattern is URL else 'quote' if value.startswith('>') else 'fenced_code')
             regions.append({'start':match.start(),'end':match.end(),'kind':kind})
     excluded = []
     # Independent passes find HTML that starts inside a quoted/code region.
@@ -61,7 +73,7 @@ def structure(text):
             'quality':{'original_characters':len(text),'analysis_characters':sum(not c.isspace() for c in view),
                        'excluded_characters':sum(s['end']-s['start'] for s in excluded),
                        'has_paragraph_boundaries':'\n' in text,
-                       'note':'保留完整输入；代码块、Markdown引用、HTML隐藏块/注释仅从判别视图等长屏蔽；不同列表项、标题和Markdown表格行不拼接；超长单句全覆盖分片，历史已丢失段落无法恢复'}}
+                       'note':'保留完整输入；代码块、Markdown引用、HTML隐藏块/注释、已知HTML标记属性及HTTP链接仅从判别视图等长屏蔽；可见链接文字保留；不同列表项、标题和Markdown表格行不拼接；超长单句全覆盖分片，历史已丢失段落无法恢复'}}
 
 
 def windows(structured):

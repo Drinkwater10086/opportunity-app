@@ -122,3 +122,49 @@ def test_wrapped_lines_within_one_list_item_keep_complete_demand_and_offsets():
     for span in result['evidence_spans'].values():
         if span:assert text[span['start']:span['end']]==span['text']
     assert 'Separate' not in result['selected_context']['text']
+
+
+@pytest.mark.parametrize('markup',[
+    '<a title="AI model extraction" href="https://example.com">Documentation</a>',
+    "<img alt='Whisper AI model API' src='https://example.com/image.png'>",
+    '<span data-description="AI > model extraction">Documentation</span>',
+    'https://example.com/AI/model/extraction',
+    '[Documentation](https://example.com/AI/model/extraction)',
+])
+def test_markup_attributes_and_url_paths_are_not_demand_evidence(markup):
+    text='Our team needs better meeting reports. '+markup
+    assert judge(text)['opportunity']==0
+    structured=prep.structure(text)
+    assert len(structured['text'])==len(text)
+    assert structured['excluded_spans']
+    assert 'AI' not in structured['text']
+
+
+@pytest.mark.parametrize('text',[
+    '<p>Our team needs meeting transcription using a <a href="https://example.com">Whisper AI model API</a>.</p>',
+    'Our team needs meeting transcription using a [Whisper AI model API](https://example.com).',
+    'Our team needs meeting transcription using a Whisper AI model API. List<T> stays visible.',
+])
+def test_visible_link_labels_and_generic_types_keep_real_evidence_and_offsets(text):
+    result=judge(text)
+    assert result['opportunity']==1
+    for span in result['evidence_spans'].values():
+        if span:
+            assert text[span['start']:span['end']]==span['text']
+            assert text[span['match_start']:span['match_end']]==span['match']
+    if 'List<T>' in text:assert 'List<T>' in prep.structure(text)['text']
+
+
+def test_overlapping_hidden_markup_and_urls_are_counted_once():
+    text='<script>https://example.com/AI/model</script> Visible text.'
+    result=prep.structure(text)
+    spans=result['excluded_spans']
+    assert all(left['end']<=right['start'] for left,right in zip(spans,spans[1:]))
+    assert result['quality']['excluded_characters']==len(text)-len(' Visible text.')
+    assert result['text'].endswith(' Visible text.')
+
+
+def test_incomplete_markup_cannot_consume_following_prose():
+    text='<span title="'+('background '*2000)+'\n\nOur team needs meeting transcription using a Whisper AI model API.'
+    assert prep.structure(text)['text']==text
+    assert judge(text)['opportunity']==1
