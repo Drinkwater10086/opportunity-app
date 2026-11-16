@@ -48,3 +48,9 @@ Node-RED论坛、V2EX和arXiv的本地筛选统一使用`ascii-word-boundary-and
 HTML转文本不执行脚本，丢弃script/style/iframe/template；XML拒绝DTD和实体声明。纯文本与Markdown保留语义内容；格式层可处理已提供的SRT/VTT字幕文本，但目前没有上传入口，也不自动下载或识别音视频。图片、PDF、音频、视频不能用标题或简介伪装为全文。
 
 明显联系方式和凭据通过既有规则脱敏；规则不能保证所有自由文本个人信息都被识别，导出和公开分享前需核查。公共Git仓库只提交代码、说明和合成测试，不提交采集正文、数据库或本地日志。
+
+## GitHub检索范围与正文格式（v14）
+
+GitHub官方说明Issue默认搜索标题、正文和评论，而当前适配器仅留存标题与主帖。因此默认添加 `in:title,body`，使检索范围与保留字段一致；用户明确填写未加引号的 `in:` 限定时尊重原查询，并提示评论未采集。引号内的文字 `"in:comments"` 不算限定。每页实际params及每条provenance保存search_scope，旧批次不改写。依据：[Issue搜索范围](https://docs.github.com/en/search-github/searching-on-github/searching-issues-and-pull-requests)、[REST搜索API](https://docs.github.com/en/rest/search/search?apiVersion=2022-11-28)。这不能保证搜索结果必然符合业务方向。
+
+GitHub Issue的JSON body是Markdown字符串，不再使用HTML转文本器处理；例如 `List<T>`、换行和围栏代码均保留。body返回异常非字符串时该页报错，不伪造正文。仍执行既有隐私脱敏；retained_body_sha256是**脱敏后保留正文**的UTF-8哈希，不是原HTTP字节哈希。provenance区分transport_format=json/content_format=markdown。分析阶段另行等长屏蔽隐藏内容，清洗原文与分析视图分开。旧批次中已被转换丢失的字符无法恢复。

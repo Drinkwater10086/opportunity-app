@@ -5,6 +5,7 @@ from html.parser import HTMLParser
 import re
 import threading
 import time
+import hashlib
 import requests
 import source_policy
 
@@ -101,6 +102,16 @@ def matches_local_query(text,query):
     return True
 
 
+def github_issue_search_scope(query):
+    # Respect a real qualifier, not the literal text "in:comments" in quotes.
+    unquoted=re.sub(r'"(?:\\.|[^"\\])*"',' ',query)
+    qualified=bool(re.search(r'(?<!\S)in:',unquoted,re.I))
+    return (query if qualified else query+' in:title,body'), {
+        'mode':'user_qualified' if qualified else 'title_body_default',
+        'retained_fields':['title','body'],'comments_collected':False,
+        'note':'按用户in:限定搜索；仅保留主帖，评论命中可能未保留' if qualified else '默认仅搜索标题和主帖正文，不将未采集评论作为命中范围'}
+
+
 def fetch(source, query, limit, days, window_end=None):
     """Bounded pagination per query, preserving page provenance and partial data."""
     source_policy.require_allowed([source])
@@ -188,7 +199,8 @@ def fetch_page(source, query, limit, days, page=1, window_end=None):
         headers['X-GitHub-Api-Version'] = '2022-11-28'
         endpoint = 'https://api.github.com/search/repositories'
     elif source == 'github_issues':
-        params = {'q': f'{query} is:issue is:public created:{since.strftime("%Y-%m-%dT%H:%M:%SZ")}..{now.strftime("%Y-%m-%dT%H:%M:%SZ")}',
+        effective,issue_scope=github_issue_search_scope(query)
+        params = {'q': f'{effective} is:issue is:public created:{since.strftime("%Y-%m-%dT%H:%M:%SZ")}..{now.strftime("%Y-%m-%dT%H:%M:%SZ")}',
                   'sort': 'comments', 'order': 'desc', 'per_page': limit, 'page': page}
         headers['X-GitHub-Api-Version'] = '2022-11-28'
         endpoint = 'https://api.github.com/search/issues'
@@ -262,14 +274,19 @@ def fetch_page(source, query, limit, days, page=1, window_end=None):
                                 provenance={'body_available': bool(raw_text.strip()),
                                             'body_method': '项目简介' if raw_text.strip() else '仅项目名称，接口未提供简介'}))
         elif source == 'github_issues':
-            raw_text = redact(plain_html(item.get('body') or ''))
+            body=item.get('body')
+            if body is not None and not isinstance(body,str):raise ValueError('GitHub Issue正文不是Markdown字符串，已停止该页采集')
+            raw_text = redact(body or '')
             records.append(dict(title=redact(item['title']), raw_text=raw_text,
                                 url=item['html_url'], published_at=item.get('created_at'),
                                 updated_at=item.get('updated_at'), stars=None,
                                 heat={'评论数': item.get('comments')},
                                 license='公开问题正文；仅留存研究必要文本，许可须核对来源',
                                 provenance={'body_available': bool(raw_text.strip()),
-                                            'body_method': '公开问题正文' if raw_text.strip() else '仅问题标题，接口未提供正文'}))
+                                            'body_method': '公开Issue Markdown正文；未采集评论' if raw_text.strip() else '仅问题标题，接口未提供正文',
+                                            'transport_format':'json','content_format':'markdown','search_scope':issue_scope},
+                                reliability={'retained_body_sha256':hashlib.sha256(raw_text.encode('utf8')).hexdigest(),
+                                             'note':'仅主帖留存正文，用户自述未经独立核实，评论未采集'}))
         elif source == 'hackernews':
             is_comment = 'comment' in item.get('_tags', [])
             title = item.get('story_title') if is_comment else item.get('title')
@@ -297,7 +314,8 @@ def fetch_page(source, query, limit, days, page=1, window_end=None):
                                          and item['content_license'].strip() else '接口未提供内容许可版本，请核对原帖'),
                                 provenance={'body_available': bool(raw_text.strip()),
                                             'body_method': '公开问答正文' if raw_text.strip() else '仅问题标题，接口未提供正文'}))
-    return records, {'endpoint': endpoint, 'params': params, 'retrieved_at': retrieved_at.isoformat(),
+    return records, {**({'search_scope':issue_scope} if source=='github_issues' else {}),
+                     'endpoint': endpoint, 'params': params, 'retrieved_at': retrieved_at.isoformat(),
                      'incomplete_results': payload.get('incomplete_results'),
                      'invalid_date_count': invalid_date_count, 'outside_window_count': outside_window_count,
                      'returned_count': len(records),

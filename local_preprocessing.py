@@ -1,17 +1,40 @@
 """Conservative, offset-preserving analysis views. Original records are immutable."""
 import re
 
-VERSION = 'structure-and-duplicate-v2'
+VERSION = 'structure-and-duplicate-v3-html-hidden'
 EXCLUDED = re.compile(r'```[\s\S]*?(?:```|\Z)|~~~[\s\S]*?(?:~~~|\Z)|(?m:^[ \t]*>[^\n]*(?:\n|$))')
+HTML_HIDDEN=re.compile(r'<!--[\s\S]*?(?:-->|\Z)|'
+                       r'<(?P<hidden>script|style|iframe|template)\b[^>]*>[\s\S]*?(?:</(?P=hidden)\s*>|\Z)',re.I)
 
 
 def structure(text):
     masked = list(text)
+    regions=[]
+    for pattern in (EXCLUDED,HTML_HIDDEN):
+        search_text=text
+        if pattern is HTML_HIDDEN:
+            # Ignore literal HTML examples inside code before matching HTML.
+            # Otherwise an unclosed example can consume all following prose.
+            html_view=list(text)
+            for region in regions:
+                if region['kind']=='fenced_code':
+                    for i in range(region['start'],region['end']):
+                        if html_view[i] not in '\r\n':html_view[i]=' '
+            search_text=''.join(html_view)
+        for match in pattern.finditer(search_text):
+            value=match.group().lstrip()
+            kind='html_hidden' if pattern is HTML_HIDDEN else 'quote' if value.startswith('>') else 'fenced_code'
+            regions.append({'start':match.start(),'end':match.end(),'kind':kind})
     excluded = []
-    for match in EXCLUDED.finditer(text):
-        kind = 'quote' if match.group().lstrip().startswith('>') else 'fenced_code'
-        excluded.append({'start':match.start(),'end':match.end(),'kind':kind})
-        for i in range(match.start(),match.end()):
+    # Independent passes find HTML that starts inside a quoted/code region.
+    # Union intervals so overlapping hidden content is not counted twice.
+    for region in sorted(regions,key=lambda s:(s['start'],-s['end'])):
+        if excluded and region['start']<excluded[-1]['end']:
+            excluded[-1]['end']=max(excluded[-1]['end'],region['end'])
+            if excluded[-1]['kind']!=region['kind']:excluded[-1]['kind']='combined_hidden'
+        else:excluded.append(dict(region))
+    for region in excluded:
+        for i in range(region['start'],region['end']):
             if masked[i] not in '\r\n':masked[i]=' '
     view=''.join(masked)
     spans=[]
@@ -37,7 +60,7 @@ def structure(text):
             'quality':{'original_characters':len(text),'analysis_characters':sum(not c.isspace() for c in view),
                        'excluded_characters':sum(s['end']-s['start'] for s in excluded),
                        'has_paragraph_boundaries':'\n' in text,
-                       'note':'保留完整输入；代码块与Markdown引用只从判别视图屏蔽；超长单句按1000字符覆盖分片、重叠150字符，历史段落无法恢复'}}
+                       'note':'保留完整输入；代码块、Markdown引用、HTML隐藏块/注释仅从判别视图等长屏蔽；超长单句全覆盖分片，历史已丢失段落无法恢复'}}
 
 
 def windows(structured):

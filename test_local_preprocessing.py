@@ -63,6 +63,20 @@ def test_negation_only_applies_to_selected_context():
     assert judge('Our team needs meeting transcription without AI using a manual workflow API.')['opportunity']==0
 
 
+def test_dependency_reference_elsewhere_cannot_overwrite_selected_context_end():
+    need='Our team needs meeting transcription using a Whisper AI model API.'
+    for text in ['Needs 18.\n\n'+need,need+'\n\nNeeds 18.']:
+        result=judge(text)
+        context=result['selected_context']
+        assert result['opportunity']==1
+        assert context['text']==need
+        assert 0<=context['start']<context['end']<=len(text)
+        assert result['analysis_text']==need
+        assert result['content_context']['record_dependency_need_spans']
+        for span in result['evidence_spans'].values():
+            if span:assert context['start']<=span['start']<span['end']<=context['end']
+
+
 def test_duplicates_are_not_deleted_and_critical_differences_preserved():
     rows=[item(1,'Our team needs meeting transcription API.'),item(2,'Our team needs meeting transcription API.'),
           item(3,'Our team does not need meeting transcription API.'),item(4,'Our team needs 20 meeting transcription API.')]

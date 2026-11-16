@@ -27,7 +27,7 @@ from sklearn.preprocessing import normalize
 
 from analysis_engine import FUNCTIONS, INDUSTRIES, rank_clusters
 
-VERSION = 'local-rules-v13-direction-scope'
+VERSION = 'local-rules-v14-source-format-context'
 SEED = 42
 MAX_RECORDS = 5000
 MAX_CHARACTERS = 20_000_000
@@ -266,8 +266,8 @@ def judge(record, direction, config):
     for match in re.finditer(PATTERNS['need'],structured['text'],re.I):
         reference=context_rules.dependency_reference(structured['text'],match)
         if reference:
-            end=match.end()+reference.end()
-            context['record_dependency_need_spans'].append({'start':match.start(),'end':end,'text':original[match.start():end]})
+            reference_end=match.end()+reference.end()
+            context['record_dependency_need_spans'].append({'start':match.start(),'end':reference_end,'text':original[match.start():reference_end]})
     for target, source in [('evidence','need'),('need_evidence','need'),('pain','need'),
                            ('user_evidence','context'),('target_user','context'),
                            ('ai_evidence','ai'),('feasibility_evidence','feasible')]:
